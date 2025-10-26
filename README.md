@@ -1,63 +1,63 @@
-# Marzban-scripts
-Scripts for Marzban
+# Rebecca-scripts
+Scripts for Rebecca
 
-## Installing Marzban
-- **Install Marzban with SQLite**:
+## Installing Rebecca
+- **Install Rebecca with SQLite**:
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install
+sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca.sh)" @ install
 ```
 
-- **Install Marzban with MySQL**:
+- **Install Rebecca with MySQL**:
 
   ```bash
-  sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mysql
+  sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca.sh)" @ install --database mysql
   ```
 
-- **Install Marzban with MariaDB**:
+- **Install Rebecca with MariaDB**:
 
   ```bash
-  sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mariadb
+  sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca.sh)" @ install --database mariadb
   ```
   
-- **Install Marzban with MariaDB and Dev branch**:
+- **Install Rebecca with MariaDB and Dev branch**:
 
   ```bash
-  sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mariadb --dev
+  sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca.sh)" @ install --database mariadb --dev
   ```
 
-- **Install Marzban with MariaDB and Manual version**:
+- **Install Rebecca with MariaDB and Manual version**:
 
   ```bash
-  sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mariadb --version v0.5.2
+  sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca.sh)" @ install --database mariadb --version v0.5.2
   ```
 
 - **Update or Change Xray-core Version**:
 
   ```bash
-  sudo marzban core-update
+  sudo rebecca core-update
   ```
 
 
-## Installing Marzban-node
-Install Marzban-node on your server using this command
+## Installing Rebecca-node
+Install Rebecca-node on your server using this command
 ```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban-node.sh)" @ install
+sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca-node.sh)" @ install
 ```
-Install Marzban-node on your server using this command with custom name:
+Install Rebecca-node on your server using this command with custom name:
 ```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban-node.sh)" @ install --name marzban-node2
+sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca-node.sh)" @ install --name rebecca-node2
 ```
-Or you can only install this script (marzban-node command) on your server by using this command
+Or you can only install this script (rebecca-node command) on your server by using this command
 ```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban-node.sh)" @ install-script
+sudo bash -c "$(curl -sL https://github.com/Gozargah/Rebecca-scripts/raw/master/rebecca-node.sh)" @ install-script
 ```
 
 Use `help` to view all commands:
-```marzban-node help```
+```rebecca-node help```
 
 - **Update or Change Xray-core Version**:
 
   ```bash
-  sudo marzban-node core-update
+  sudo rebecca-node core-update
   ```

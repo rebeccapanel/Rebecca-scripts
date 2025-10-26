@@ -3,7 +3,7 @@ set -e
 
 INSTALL_DIR="/opt"
 if [ -z "$APP_NAME" ]; then
-    APP_NAME="marzban"
+    APP_NAME="rebecca"
 fi
 APP_DIR="$INSTALL_DIR/$APP_NAME"
 DATA_DIR="/var/lib/$APP_NAME"
@@ -122,15 +122,15 @@ detect_compose() {
     fi
 }
 
-install_marzban_script() {
-    FETCH_REPO="Gozargah/Marzban-scripts"
-    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/marzban.sh"
-    colorized_echo blue "Installing marzban script"
-    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/marzban
-    colorized_echo green "marzban script installed successfully"
+install_rebecca_script() {
+    FETCH_REPO="Gozargah/Rebecca-scripts"
+    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca.sh"
+    colorized_echo blue "Installing rebecca script"
+    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/rebecca
+    colorized_echo green "rebecca script installed successfully"
 }
 
-is_marzban_installed() {
+is_rebecca_installed() {
     if [ -d $APP_DIR ]; then
         return 0
     else
@@ -231,7 +231,7 @@ send_backup_to_telegram() {
     fi
 
     local backup_size=$(du -m "$backup_path" | cut -f1)
-    local split_dir="/tmp/marzban_backup_split"
+    local split_dir="/tmp/rebecca_backup_split"
     local is_single_file=true
 
     mkdir -p "$split_dir"
@@ -450,7 +450,7 @@ add_cron_job() {
 
     crontab -l 2>/dev/null > "$temp_cron" || true
     grep -v "$command" "$temp_cron" > "${temp_cron}.tmp" && mv "${temp_cron}.tmp" "$temp_cron"
-    echo "$schedule $command # marzban-backup-service" >> "$temp_cron"
+    echo "$schedule $command # rebecca-backup-service" >> "$temp_cron"
     
     if crontab "$temp_cron"; then
         colorized_echo green "Cron job successfully added."
@@ -473,7 +473,7 @@ remove_backup_service() {
     local temp_cron=$(mktemp)
     crontab -l 2>/dev/null > "$temp_cron"
 
-    sed -i '/# marzban-backup-service/d' "$temp_cron"
+    sed -i '/# rebecca-backup-service/d' "$temp_cron"
 
     if crontab "$temp_cron"; then
         colorized_echo green "Backup service task removed from crontab."
@@ -488,11 +488,11 @@ remove_backup_service() {
 
 backup_command() {
     local backup_dir="$APP_DIR/backup"
-    local temp_dir="/tmp/marzban_backup"
+    local temp_dir="/tmp/rebecca_backup"
     local timestamp=$(date +"%Y%m%d%H%M%S")
     local backup_file="$backup_dir/backup_$timestamp.tar.gz"
     local error_messages=()
-    local log_file="/var/log/marzban_backup_error.log"
+    local log_file="/var/log/rebecca_backup_error.log"
     > "$log_file"
     echo "Backup Log - $(date)" > "$log_file"
 
@@ -553,7 +553,7 @@ backup_command() {
                 fi
                 ;;
             mysql)
-                if ! docker exec "$container_name" mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" marzban --events --triggers  > "$temp_dir/db_backup.sql" 2>>"$log_file"; then
+                if ! docker exec "$container_name" mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" rebecca --events --triggers  > "$temp_dir/db_backup.sql" 2>>"$log_file"; then
                     error_messages+=("MySQL dump failed.")
                 fi
                 ;;
@@ -571,7 +571,7 @@ backup_command() {
 
     cp "$APP_DIR/.env" "$temp_dir/" 2>>"$log_file"
     cp "$APP_DIR/docker-compose.yml" "$temp_dir/" 2>>"$log_file"
-    rsync -av --exclude 'xray-core' --exclude 'mysql' "$DATA_DIR/" "$temp_dir/marzban_data/" >>"$log_file" 2>&1
+    rsync -av --exclude 'xray-core' --exclude 'mysql' "$DATA_DIR/" "$temp_dir/rebecca_data/" >>"$log_file" 2>&1
 
     if ! tar -czf "$backup_file" -C "$temp_dir" .; then
         error_messages+=("Failed to create backup archive.")
@@ -679,14 +679,14 @@ get_xray_core() {
     rm "${xray_filename}"
 }
 
-# Function to update the Marzban Main core
+# Function to update the Rebecca Main core
 update_core_command() {
     check_running_as_root
     get_xray_core
-    # Change the Marzban core
-    xray_executable_path="XRAY_EXECUTABLE_PATH=\"/var/lib/marzban/xray-core/xray\""
+    # Change the Rebecca core
+    xray_executable_path="XRAY_EXECUTABLE_PATH=\"/var/lib/rebecca/xray-core/xray\""
     
-    echo "Changing the Marzban core..."
+    echo "Changing the Rebecca core..."
     # Check if the XRAY_EXECUTABLE_PATH string already exists in the .env file
     if ! grep -q "^XRAY_EXECUTABLE_PATH=" "$ENV_FILE"; then
         # If the string does not exist, add it
@@ -696,21 +696,21 @@ update_core_command() {
         sed -i "s~^XRAY_EXECUTABLE_PATH=.*~${xray_executable_path}~" "$ENV_FILE"
     fi
     
-    # Restart Marzban
-    colorized_echo red "Restarting Marzban..."
+    # Restart Rebecca
+    colorized_echo red "Restarting Rebecca..."
     if restart_command -n >/dev/null 2>&1; then
-        colorized_echo green "Marzban successfully restarted!"
+        colorized_echo green "Rebecca successfully restarted!"
     else
-        colorized_echo red "Marzban restart failed!"
+        colorized_echo red "Rebecca restart failed!"
     fi
     colorized_echo blue "Installation of Xray-core version $selected_version completed."
 }
 
-install_marzban() {
-    local marzban_version=$1
+install_rebecca() {
+    local rebecca_version=$1
     local database_type=$2
     # Fetch releases
-    FILES_URL_PREFIX="https://raw.githubusercontent.com/Gozargah/Marzban/master"
+    FILES_URL_PREFIX="https://raw.githubusercontent.com/rebeccapanel/Rebecca/master"
     
     mkdir -p "$DATA_DIR"
     mkdir -p "$APP_DIR"
@@ -722,14 +722,14 @@ install_marzban() {
         # Generate docker-compose.yml with MariaDB content
         cat > "$docker_file_path" <<EOF
 services:
-  marzban:
-    image: gozargah/marzban:${marzban_version}
+  rebecca:
+    image: rebeccapanel/rebecca:${rebecca_version}
     restart: always
     env_file: .env
     network_mode: host
     volumes:
-      - /var/lib/marzban:/var/lib/marzban
-      - /var/lib/marzban/logs:/var/lib/marzban-node
+      - /var/lib/rebecca:/var/lib/rebecca
+      - /var/lib/rebecca/logs:/var/lib/rebecca-node
     depends_on:
       mariadb:
         condition: service_healthy
@@ -761,7 +761,7 @@ services:
       - --slow_query_log_file=/var/lib/mysql/slow.log # Logs slow queries for troubleshooting
       - --long_query_time=2                       # Defines slow query threshold as 2 seconds
     volumes:
-      - /var/lib/marzban/mysql:/var/lib/mysql
+      - /var/lib/rebecca/mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       start_period: 10s
@@ -780,28 +780,28 @@ EOF
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
 
         # Comment out the SQLite line
-        sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
+        sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/rebecca/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
 
 
         # Add the MySQL connection string
-        #echo -e '\nSQLALCHEMY_DATABASE_URL = "mysql+pymysql://marzban:password@127.0.0.1:3306/marzban"' >> "$APP_DIR/.env"
+        #echo -e '\nSQLALCHEMY_DATABASE_URL = "mysql+pymysql://rebecca:password@127.0.0.1:3306/rebecca"' >> "$APP_DIR/.env"
 
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
+        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/rebecca/xray_config.json"~' "$APP_DIR/.env"
 
 
-        prompt_for_marzban_password
+        prompt_for_rebecca_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
         
         echo "" >> "$ENV_FILE"
         echo "" >> "$ENV_FILE"
         echo "# Database configuration" >> "$ENV_FILE"
         echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$ENV_FILE"
-        echo "MYSQL_DATABASE=marzban" >> "$ENV_FILE"
-        echo "MYSQL_USER=marzban" >> "$ENV_FILE"
+        echo "MYSQL_DATABASE=rebecca" >> "$ENV_FILE"
+        echo "MYSQL_USER=rebecca" >> "$ENV_FILE"
         echo "MYSQL_PASSWORD=$MYSQL_PASSWORD" >> "$ENV_FILE"
         
-        SQLALCHEMY_DATABASE_URL="mysql+pymysql://marzban:${MYSQL_PASSWORD}@127.0.0.1:3306/marzban"
+        SQLALCHEMY_DATABASE_URL="mysql+pymysql://rebecca:${MYSQL_PASSWORD}@127.0.0.1:3306/rebecca"
         
         echo "" >> "$ENV_FILE"
         echo "# SQLAlchemy Database URL" >> "$ENV_FILE"
@@ -813,14 +813,14 @@ EOF
         # Generate docker-compose.yml with MySQL content
         cat > "$docker_file_path" <<EOF
 services:
-  marzban:
-    image: gozargah/marzban:${marzban_version}
+  rebecca:
+    image: rebeccapanel/rebecca:${rebecca_version}
     restart: always
     env_file: .env
     network_mode: host
     volumes:
-      - /var/lib/marzban:/var/lib/marzban
-      - /var/lib/marzban/logs:/var/lib/marzban-node
+      - /var/lib/rebecca:/var/lib/rebecca
+      - /var/lib/rebecca/logs:/var/lib/rebecca-node
     depends_on:
       mysql:
         condition: service_healthy
@@ -853,9 +853,9 @@ services:
       - --slow_query_log_file=/var/lib/mysql/slow.log # Logs slow queries for troubleshooting
       - --long_query_time=2                       # Defines slow query threshold as 2 seconds
     volumes:
-      - /var/lib/marzban/mysql:/var/lib/mysql
+      - /var/lib/rebecca/mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "marzban", "--password=\${MYSQL_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "rebecca", "--password=\${MYSQL_PASSWORD}"]
       start_period: 5s
       interval: 5s
       timeout: 5s
@@ -872,28 +872,28 @@ EOF
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
 
         # Comment out the SQLite line
-        sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
+        sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/rebecca/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
 
 
         # Add the MySQL connection string
-        #echo -e '\nSQLALCHEMY_DATABASE_URL = "mysql+pymysql://marzban:password@127.0.0.1:3306/marzban"' >> "$APP_DIR/.env"
+        #echo -e '\nSQLALCHEMY_DATABASE_URL = "mysql+pymysql://rebecca:password@127.0.0.1:3306/rebecca"' >> "$APP_DIR/.env"
 
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
+        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/rebecca/xray_config.json"~' "$APP_DIR/.env"
 
 
-        prompt_for_marzban_password
+        prompt_for_rebecca_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
         
         echo "" >> "$ENV_FILE"
         echo "" >> "$ENV_FILE"
         echo "# Database configuration" >> "$ENV_FILE"
         echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$ENV_FILE"
-        echo "MYSQL_DATABASE=marzban" >> "$ENV_FILE"
-        echo "MYSQL_USER=marzban" >> "$ENV_FILE"
+        echo "MYSQL_DATABASE=rebecca" >> "$ENV_FILE"
+        echo "MYSQL_USER=rebecca" >> "$ENV_FILE"
         echo "MYSQL_PASSWORD=$MYSQL_PASSWORD" >> "$ENV_FILE"
         
-        SQLALCHEMY_DATABASE_URL="mysql+pymysql://marzban:${MYSQL_PASSWORD}@127.0.0.1:3306/marzban"
+        SQLALCHEMY_DATABASE_URL="mysql+pymysql://rebecca:${MYSQL_PASSWORD}@127.0.0.1:3306/rebecca"
         
         echo "" >> "$ENV_FILE"
         echo "# SQLAlchemy Database URL" >> "$ENV_FILE"
@@ -909,12 +909,12 @@ EOF
         curl -sL "$FILES_URL_PREFIX/docker-compose.yml" -o "$docker_file_path"
 
         # Install requested version
-        if [ "$marzban_version" == "latest" ]; then
-            yq -i '.services.marzban.image = "gozargah/marzban:latest"' "$docker_file_path"
+        if [ "$rebecca_version" == "latest" ]; then
+            yq -i '.services.rebecca.image = "rebeccapanel/rebecca:latest"' "$docker_file_path"
         else
-            yq -i ".services.marzban.image = \"gozargah/marzban:${marzban_version}\"" "$docker_file_path"
+            yq -i ".services.rebecca.image = \"rebeccapanel/rebecca:${rebecca_version}\"" "$docker_file_path"
         fi
-        echo "Installing $marzban_version version"
+        echo "Installing $rebecca_version version"
         colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
 
 
@@ -923,8 +923,8 @@ EOF
 
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
         sed -i 's/^# \(SQLALCHEMY_DATABASE_URL = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
-        sed -i 's~\(SQLALCHEMY_DATABASE_URL = \).*~\1"sqlite:////var/lib/marzban/db.sqlite3"~' "$APP_DIR/.env"
+        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/rebecca/xray_config.json"~' "$APP_DIR/.env"
+        sed -i 's~\(SQLALCHEMY_DATABASE_URL = \).*~\1"sqlite:////var/lib/rebecca/db.sqlite3"~' "$APP_DIR/.env"
 
 
 
@@ -938,21 +938,21 @@ EOF
     curl -sL "$FILES_URL_PREFIX/xray_config.json" -o "$DATA_DIR/xray_config.json"
     colorized_echo green "File saved in $DATA_DIR/xray_config.json"
     
-    colorized_echo green "Marzban's files downloaded successfully"
+    colorized_echo green "Rebecca's files downloaded successfully"
 }
 
-up_marzban() {
+up_rebecca() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" up -d --remove-orphans
 }
 
-follow_marzban_logs() {
+follow_rebecca_logs() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" logs -f
 }
 
 status_command() {
     
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
         echo -n "Status: "
         colorized_echo red "Not Installed"
         exit 1
@@ -960,7 +960,7 @@ status_command() {
     
     detect_compose
     
-    if ! is_marzban_up; then
+    if ! is_rebecca_up; then
         echo -n "Status: "
         colorized_echo blue "Down"
         exit 1
@@ -986,12 +986,12 @@ status_command() {
 }
 
 
-prompt_for_marzban_password() {
+prompt_for_rebecca_password() {
     colorized_echo cyan "This password will be used to access the database and should be strong."
     colorized_echo cyan "If you do not enter a custom password, a secure 20-character password will be generated automatically."
 
     # Запрашиваем ввод пароля
-    read -p "Enter the password for the marzban user (or press Enter to generate a secure default password): " MYSQL_PASSWORD
+    read -p "Enter the password for the rebecca user (or press Enter to generate a secure default password): " MYSQL_PASSWORD
 
     # Генерация 20-значного пароля, если пользователь оставил поле пустым
     if [ -z "$MYSQL_PASSWORD" ]; then
@@ -1009,8 +1009,8 @@ install_command() {
 
     # Default values
     database_type="sqlite"
-    marzban_version="latest"
-    marzban_version_set="false"
+    rebecca_version="latest"
+    rebecca_version_set="false"
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -1021,21 +1021,21 @@ install_command() {
                 shift 2
             ;;
             --dev)
-                if [[ "$marzban_version_set" == "true" ]]; then
+                if [[ "$rebecca_version_set" == "true" ]]; then
                     colorized_echo red "Error: Cannot use --dev and --version options simultaneously."
                     exit 1
                 fi
-                marzban_version="dev"
-                marzban_version_set="true"
+                rebecca_version="dev"
+                rebecca_version_set="true"
                 shift
             ;;
             --version)
-                if [[ "$marzban_version_set" == "true" ]]; then
+                if [[ "$rebecca_version_set" == "true" ]]; then
                     colorized_echo red "Error: Cannot use --dev and --version options simultaneously."
                     exit 1
                 fi
-                marzban_version="$2"
-                marzban_version_set="true"
+                rebecca_version="$2"
+                rebecca_version_set="true"
                 shift 2
             ;;
             *)
@@ -1045,9 +1045,9 @@ install_command() {
         esac
     done
 
-    # Check if marzban is already installed
-    if is_marzban_installed; then
-        colorized_echo red "Marzban is already installed at $APP_DIR"
+    # Check if rebecca is already installed
+    if is_rebecca_installed; then
+        colorized_echo red "Rebecca is already installed at $APP_DIR"
         read -p "Do you want to override the previous installation? (y/n) "
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             colorized_echo red "Aborted installation"
@@ -1068,11 +1068,11 @@ install_command() {
         install_yq
     fi
     detect_compose
-    install_marzban_script
+    install_rebecca_script
     # Function to check if a version exists in the GitHub releases
     check_version_exists() {
         local version=$1
-        repo_url="https://api.github.com/repos/Gozargah/Marzban/releases"
+        repo_url="https://api.github.com/repos/Gozargah/Rebecca/releases"
         if [ "$version" == "latest" ] || [ "$version" == "dev" ]; then
             return 0
         fi
@@ -1088,20 +1088,20 @@ install_command() {
         fi
     }
     # Check if the version is valid and exists
-    if [[ "$marzban_version" == "latest" || "$marzban_version" == "dev" || "$marzban_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        if check_version_exists "$marzban_version"; then
-            install_marzban "$marzban_version" "$database_type"
-            echo "Installing $marzban_version version"
+    if [[ "$rebecca_version" == "latest" || "$rebecca_version" == "dev" || "$rebecca_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if check_version_exists "$rebecca_version"; then
+            install_rebecca "$rebecca_version" "$database_type"
+            echo "Installing $rebecca_version version"
         else
-            echo "Version $marzban_version does not exist. Please enter a valid version (e.g. v0.5.2)"
+            echo "Version $rebecca_version does not exist. Please enter a valid version (e.g. v0.5.2)"
             exit 1
         fi
     else
         echo "Invalid version format. Please enter a valid version (e.g. v0.5.2)"
         exit 1
     fi
-    up_marzban
-    follow_marzban_logs
+    up_rebecca
+    follow_rebecca_logs
 }
 
 install_yq() {
@@ -1185,26 +1185,26 @@ install_yq() {
 }
 
 
-down_marzban() {
+down_rebecca() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" down
 }
 
 
 
-show_marzban_logs() {
+show_rebecca_logs() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" logs
 }
 
-follow_marzban_logs() {
+follow_rebecca_logs() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" logs -f
 }
 
-marzban_cli() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" exec -e CLI_PROG_NAME="marzban cli" marzban marzban-cli "$@"
+rebecca_cli() {
+    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" exec -e CLI_PROG_NAME="rebecca cli" rebecca rebecca-cli "$@"
 }
 
 
-is_marzban_up() {
+is_rebecca_up() {
     if [ -z "$($COMPOSE -f $COMPOSE_FILE ps -q -a)" ]; then
         return 1
     else
@@ -1214,54 +1214,54 @@ is_marzban_up() {
 
 uninstall_command() {
     check_running_as_root
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
-    read -p "Do you really want to uninstall Marzban? (y/n) "
+    read -p "Do you really want to uninstall Rebecca? (y/n) "
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         colorized_echo red "Aborted"
         exit 1
     fi
     
     detect_compose
-    if is_marzban_up; then
-        down_marzban
+    if is_rebecca_up; then
+        down_rebecca
     fi
-    uninstall_marzban_script
-    uninstall_marzban
-    uninstall_marzban_docker_images
+    uninstall_rebecca_script
+    uninstall_rebecca
+    uninstall_rebecca_docker_images
     
-    read -p "Do you want to remove Marzban's data files too ($DATA_DIR)? (y/n) "
+    read -p "Do you want to remove Rebecca's data files too ($DATA_DIR)? (y/n) "
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        colorized_echo green "Marzban uninstalled successfully"
+        colorized_echo green "Rebecca uninstalled successfully"
     else
-        uninstall_marzban_data_files
-        colorized_echo green "Marzban uninstalled successfully"
+        uninstall_rebecca_data_files
+        colorized_echo green "Rebecca uninstalled successfully"
     fi
 }
 
-uninstall_marzban_script() {
-    if [ -f "/usr/local/bin/marzban" ]; then
-        colorized_echo yellow "Removing marzban script"
-        rm "/usr/local/bin/marzban"
+uninstall_rebecca_script() {
+    if [ -f "/usr/local/bin/rebecca" ]; then
+        colorized_echo yellow "Removing rebecca script"
+        rm "/usr/local/bin/rebecca"
     fi
 }
 
-uninstall_marzban() {
+uninstall_rebecca() {
     if [ -d "$APP_DIR" ]; then
         colorized_echo yellow "Removing directory: $APP_DIR"
         rm -r "$APP_DIR"
     fi
 }
 
-uninstall_marzban_docker_images() {
-    images=$(docker images | grep marzban | awk '{print $3}')
+uninstall_rebecca_docker_images() {
+    images=$(docker images | grep rebecca | awk '{print $3}')
     
     if [ -n "$images" ]; then
-        colorized_echo yellow "Removing Docker images of Marzban"
+        colorized_echo yellow "Removing Docker images of Rebecca"
         for image in $images; do
             if docker rmi "$image" >/dev/null 2>&1; then
                 colorized_echo yellow "Image $image removed"
@@ -1270,7 +1270,7 @@ uninstall_marzban_docker_images() {
     fi
 }
 
-uninstall_marzban_data_files() {
+uninstall_rebecca_data_files() {
     if [ -d "$DATA_DIR" ]; then
         colorized_echo yellow "Removing directory: $DATA_DIR"
         rm -r "$DATA_DIR"
@@ -1279,7 +1279,7 @@ uninstall_marzban_data_files() {
 
 restart_command() {
     help() {
-        colorized_echo red "Usage: marzban restart [options]"
+        colorized_echo red "Usage: rebecca restart [options]"
         echo
         echo "OPTIONS:"
         echo "  -h, --help        display this help message"
@@ -1305,24 +1305,24 @@ restart_command() {
         shift
     done
     
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
     detect_compose
     
-    down_marzban
-    up_marzban
+    down_rebecca
+    up_rebecca
     if [ "$no_logs" = false ]; then
-        follow_marzban_logs
+        follow_rebecca_logs
     fi
-    colorized_echo green "Marzban successfully restarted!"
+    colorized_echo green "Rebecca successfully restarted!"
 }
 logs_command() {
     help() {
-        colorized_echo red "Usage: marzban logs [options]"
+        colorized_echo red "Usage: rebecca logs [options]"
         echo ""
         echo "OPTIONS:"
         echo "  -h, --help        display this help message"
@@ -1348,64 +1348,64 @@ logs_command() {
         shift
     done
     
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
     detect_compose
     
-    if ! is_marzban_up; then
-        colorized_echo red "Marzban is not up."
+    if ! is_rebecca_up; then
+        colorized_echo red "Rebecca is not up."
         exit 1
     fi
     
     if [ "$no_follow" = true ]; then
-        show_marzban_logs
+        show_rebecca_logs
     else
-        follow_marzban_logs
+        follow_rebecca_logs
     fi
 }
 
 down_command() {
     
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
     detect_compose
     
-    if ! is_marzban_up; then
-        colorized_echo red "Marzban's already down"
+    if ! is_rebecca_up; then
+        colorized_echo red "Rebecca's already down"
         exit 1
     fi
     
-    down_marzban
+    down_rebecca
 }
 
 cli_command() {
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
     detect_compose
     
-    if ! is_marzban_up; then
-        colorized_echo red "Marzban is not up."
+    if ! is_rebecca_up; then
+        colorized_echo red "Rebecca is not up."
         exit 1
     fi
     
-    marzban_cli "$@"
+    rebecca_cli "$@"
 }
 
 up_command() {
     help() {
-        colorized_echo red "Usage: marzban up [options]"
+        colorized_echo red "Usage: rebecca up [options]"
         echo ""
         echo "OPTIONS:"
         echo "  -h, --help        display this help message"
@@ -1431,55 +1431,55 @@ up_command() {
         shift
     done
     
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
     detect_compose
     
-    if is_marzban_up; then
-        colorized_echo red "Marzban's already up"
+    if is_rebecca_up; then
+        colorized_echo red "Rebecca's already up"
         exit 1
     fi
     
-    up_marzban
+    up_rebecca
     if [ "$no_logs" = false ]; then
-        follow_marzban_logs
+        follow_rebecca_logs
     fi
 }
 
 update_command() {
     check_running_as_root
-    # Check if marzban is installed
-    if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+    # Check if rebecca is installed
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca's not installed!"
         exit 1
     fi
     
     detect_compose
     
-    update_marzban_script
+    update_rebecca_script
     colorized_echo blue "Pulling latest version"
-    update_marzban
+    update_rebecca
     
-    colorized_echo blue "Restarting Marzban's services"
-    down_marzban
-    up_marzban
+    colorized_echo blue "Restarting Rebecca's services"
+    down_rebecca
+    up_rebecca
     
-    colorized_echo blue "Marzban updated successfully"
+    colorized_echo blue "Rebecca updated successfully"
 }
 
-update_marzban_script() {
-    FETCH_REPO="Gozargah/Marzban-scripts"
-    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/marzban.sh"
-    colorized_echo blue "Updating marzban script"
-    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/marzban
-    colorized_echo green "marzban script updated successfully"
+update_rebecca_script() {
+    FETCH_REPO="Gozargah/Rebecca-scripts"
+    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca.sh"
+    colorized_echo blue "Updating rebecca script"
+    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/rebecca
+    colorized_echo green "rebecca script updated successfully"
 }
 
-update_marzban() {
+update_rebecca() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" pull
 }
 
@@ -1523,7 +1523,7 @@ edit_env_command() {
 usage() {
     local script_name="${0##*/}"
     colorized_echo blue "=============================="
-    colorized_echo magenta "           Marzban Help"
+    colorized_echo magenta "           Rebecca Help"
     colorized_echo blue "=============================="
     colorized_echo cyan "Usage:"
     echo "  ${script_name} [command]"
@@ -1535,13 +1535,13 @@ usage() {
     colorized_echo yellow "  restart         $(tput sgr0)– Restart services"
     colorized_echo yellow "  status          $(tput sgr0)– Show status"
     colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
-    colorized_echo yellow "  cli             $(tput sgr0)– Marzban CLI"
-    colorized_echo yellow "  install         $(tput sgr0)– Install Marzban"
+    colorized_echo yellow "  cli             $(tput sgr0)– Rebecca CLI"
+    colorized_echo yellow "  install         $(tput sgr0)– Install Rebecca"
     colorized_echo yellow "  update          $(tput sgr0)– Update to latest version"
-    colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Marzban"
-    colorized_echo yellow "  install-script  $(tput sgr0)– Install Marzban script"
+    colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Rebecca"
+    colorized_echo yellow "  install-script  $(tput sgr0)– Install Rebecca script"
     colorized_echo yellow "  backup          $(tput sgr0)– Manual backup launch"
-    colorized_echo yellow "  backup-service  $(tput sgr0)– Marzban Backupservice to backup to TG, and a new job in crontab"
+    colorized_echo yellow "  backup-service  $(tput sgr0)– Rebecca Backupservice to backup to TG, and a new job in crontab"
     colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
     colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi editor)"
     colorized_echo yellow "  edit-env        $(tput sgr0)– Edit environment file (via nano or vi editor)"
@@ -1580,7 +1580,7 @@ case "$1" in
     uninstall)
         shift; uninstall_command "$@";;
     install-script)
-        shift; install_marzban_script "$@";;
+        shift; install_rebecca_script "$@";;
     core-update)
         shift; update_core_command "$@";;
     edit)
