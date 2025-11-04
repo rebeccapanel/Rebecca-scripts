@@ -97,16 +97,15 @@ set_branch_variables() {
         dev|development)
             BRANCH="dev"
             IMAGE_TAG="dev"
-            SCRIPT_BRANCH="dev"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:dev"
         ;;
         *)
             BRANCH="master"
             IMAGE_TAG="latest"
-            SCRIPT_BRANCH="master"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
         ;;
     esac
+    SCRIPT_BRANCH="master"
     SCRIPT_URL="https://github.com/$FETCH_REPO/raw/$SCRIPT_BRANCH/rebecca-node.sh"
 }
 
