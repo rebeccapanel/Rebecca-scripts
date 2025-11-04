@@ -242,13 +242,9 @@ install_docker() {
 }
 
 install_rebecca_node_script() {
-    colorized_echo blue "Installing rebecca script"
+    colorized_echo blue "Installing rebecca-node script"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
-    curl -sSL $SCRIPT_URL -o $TARGET_PATH
-    
-    sed -i "s/^APP_NAME=.*/APP_NAME=\"$APP_NAME\"/" $TARGET_PATH
-    
-    chmod 755 $TARGET_PATH
+    install -m 755 "$0" "$TARGET_PATH"
     colorized_echo green "Rebecca-node script installed successfully at $TARGET_PATH"
 }
 
@@ -309,21 +305,21 @@ install_rebecca_node() {
     
     print_info "Certificate saved to $CERT_FILE"
     
-    SERVICE_PROTOCOL_VALUE="rest"
+    SERVICE_PROTOCOL_VALUE="grpc"
     echo
     colorized_echo blue "Select the node service protocol:"
-    echo "  1) REST (default)"
-    echo "  2) gRPC"
+    echo "  1) gRPC (default)"
+    echo "  2) REST"
     echo "  3) RPyc"
     while true; do
         read -p "Enter choice [1]: " -r protocol_choice
         case "${protocol_choice,,}" in
-            ""|1|"rest")
-                SERVICE_PROTOCOL_VALUE="rest"
+            ""|1|"grpc")
+                SERVICE_PROTOCOL_VALUE="grpc"
                 break
                 ;;
-            2|"grpc")
-                SERVICE_PROTOCOL_VALUE="grpc"
+            2|"rest")
+                SERVICE_PROTOCOL_VALUE="rest"
                 break
                 ;;
             3|"rpyc")
@@ -384,13 +380,13 @@ services:
     restart: always
     network_mode: host
     environment:
-      SSL_CLIENT_CERT_FILE: "/var/lib/rebecca-node/cert.pem"
+      SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/cert.pem"
       SERVICE_PORT: "$SERVICE_PORT"
       XRAY_API_PORT: "$XRAY_API_PORT"
       SERVICE_PROTOCOL: "$SERVICE_PROTOCOL_VALUE"
 
     volumes:
-      - $DATA_MAIN_DIR:/var/lib/rebecca
+      - $DATA_DIR:/var/lib/marzban-node
       - $DATA_DIR:/var/lib/rebecca-node
 EOL
     colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
