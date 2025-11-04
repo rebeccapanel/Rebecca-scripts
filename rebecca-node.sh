@@ -58,7 +58,7 @@ DATA_MAIN_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 LAST_XRAY_CORES=5
 CERT_FILE="$DATA_DIR/cert.pem"
-FETCH_REPO="Gozargah/Rebecca-scripts"
+FETCH_REPO="rebeccapanel/Rebecca-scripts"
 BRANCH_FILE="$APP_DIR/.branch"
 
 colorized_echo() {
@@ -254,8 +254,19 @@ install_rebecca_node_script() {
     if [[ -n "$SOURCE_SCRIPT" ]]; then
         install -m 755 "$SOURCE_SCRIPT" "$TARGET_PATH"
     else
-        curl -sSL "$SCRIPT_URL" -o "$TARGET_PATH"
-        chmod 755 "$TARGET_PATH"
+        TEMP_SCRIPT=$(mktemp)
+        if ! curl -fsSL "$SCRIPT_URL" -o "$TEMP_SCRIPT"; then
+            colorized_echo red "Failed to download script from $SCRIPT_URL"
+            rm -f "$TEMP_SCRIPT"
+            exit 1
+        fi
+        if head -n 1 "$TEMP_SCRIPT" | grep -qi "<!DOCTYPE html>"; then
+            colorized_echo red "Unexpected response while downloading script (HTML received)."
+            rm -f "$TEMP_SCRIPT"
+            exit 1
+        fi
+        install -m 755 "$TEMP_SCRIPT" "$TARGET_PATH"
+        rm -f "$TEMP_SCRIPT"
     fi
 
     colorized_echo green "Rebecca-node script installed successfully at $TARGET_PATH"
