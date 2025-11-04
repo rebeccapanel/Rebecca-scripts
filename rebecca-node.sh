@@ -59,7 +59,7 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 LAST_XRAY_CORES=5
 CERT_FILE="$DATA_DIR/cert.pem"
 FETCH_REPO="Gozargah/Rebecca-scripts"
-SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca-node.sh"
+BRANCH_FILE="$APP_DIR/.branch"
 
 colorized_echo() {
     local color=$1
@@ -90,6 +90,65 @@ colorized_echo() {
         ;;
     esac
 }
+
+set_branch_variables() {
+    local selected_branch="${1:-master}"
+    case "$selected_branch" in
+        dev|development)
+            BRANCH="dev"
+            IMAGE_TAG="dev"
+            SCRIPT_BRANCH="dev"
+            DOCKER_IMAGE="rebeccapanel/rebecca-node:dev"
+        ;;
+        *)
+            BRANCH="master"
+            IMAGE_TAG="latest"
+            SCRIPT_BRANCH="master"
+            DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
+        ;;
+    esac
+    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/$SCRIPT_BRANCH/rebecca-node.sh"
+}
+
+prompt_branch_selection() {
+    local question
+    if [[ "$BRANCH" == "dev" ]]; then
+        question="Keep using the dev branch? (Y/n): "
+    else
+        question="Do you want to install Rebecca-node using the dev branch? (y/N): "
+    fi
+    read -p "$question" -r branch_answer
+    if [[ "$BRANCH" == "dev" ]]; then
+        if [[ -z "$branch_answer" || "$branch_answer" =~ ^[Yy]$ ]]; then
+            set_branch_variables dev
+        else
+            set_branch_variables master
+        fi
+    else
+        if [[ "$branch_answer" =~ ^[Yy]$ ]]; then
+            set_branch_variables dev
+        else
+            set_branch_variables master
+        fi
+    fi
+    colorized_echo blue "Selected branch: $BRANCH (image tag: $IMAGE_TAG)"
+}
+
+BRANCH="master"
+IMAGE_TAG="latest"
+SCRIPT_BRANCH="master"
+DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
+SCRIPT_URL=""
+if [ -f "$BRANCH_FILE" ]; then
+    saved_branch=$(tr -d '[:space:]' < "$BRANCH_FILE")
+    if [[ -n "$saved_branch" ]]; then
+        set_branch_variables "$saved_branch"
+    else
+        set_branch_variables "$BRANCH"
+    fi
+else
+    set_branch_variables "$BRANCH"
+fi
 
 check_running_as_root() {
     if [ "$(id -u)" != "0" ]; then
@@ -226,6 +285,7 @@ install_rebecca_node() {
     mkdir -p "$DATA_DIR"
     mkdir -p "$APP_DIR"
     mkdir -p "$DATA_MAIN_DIR"
+    echo "$BRANCH" > "$BRANCH_FILE"
     
     # Проверка на существование файла перед его очисткой
     if [ -f "$CERT_FILE" ]; then
@@ -249,15 +309,32 @@ install_rebecca_node() {
     
     print_info "Certificate saved to $CERT_FILE"
     
-    # Prompt the user to choose REST or another protocol
-    read -p "Do you want to use REST protocol? (Y/n): " -r use_rest
-    
-    # Default to "Y" if the user just presses ENTER
-    if [[ -z "$use_rest" || "$use_rest" =~ ^[Yy]$ ]]; then
-        USE_REST=true
-    else
-        USE_REST=false
-    fi
+    SERVICE_PROTOCOL_VALUE="rest"
+    echo
+    colorized_echo blue "Select the node service protocol:"
+    echo "  1) REST (default)"
+    echo "  2) gRPC"
+    echo "  3) RPyc"
+    while true; do
+        read -p "Enter choice [1]: " -r protocol_choice
+        case "${protocol_choice,,}" in
+            ""|1|"rest")
+                SERVICE_PROTOCOL_VALUE="rest"
+                break
+                ;;
+            2|"grpc")
+                SERVICE_PROTOCOL_VALUE="grpc"
+                break
+                ;;
+            3|"rpyc")
+                SERVICE_PROTOCOL_VALUE="rpyc"
+                break
+                ;;
+            *)
+                colorized_echo red "Invalid option. Please select 1, 2, or 3."
+                ;;
+        esac
+    done
     
     get_occupied_ports
     
@@ -303,23 +380,14 @@ install_rebecca_node() {
 services:
   rebecca-node:
     container_name: $APP_NAME
-    image: rebeccapanel/rebecca-node:latest
+    image: $DOCKER_IMAGE
     restart: always
     network_mode: host
     environment:
       SSL_CLIENT_CERT_FILE: "/var/lib/rebecca-node/cert.pem"
       SERVICE_PORT: "$SERVICE_PORT"
       XRAY_API_PORT: "$XRAY_API_PORT"
-EOL
-    
-    # Add SERVICE_PROTOCOL line only if REST is selected
-    if [[ "$USE_REST" = true ]]; then
-        cat >> "$COMPOSE_FILE" <<EOL
-      SERVICE_PROTOCOL: "rest"
-EOL
-    fi
-    
-    cat >> "$COMPOSE_FILE" <<EOL
+      SERVICE_PROTOCOL: "$SERVICE_PROTOCOL_VALUE"
 
     volumes:
       - $DATA_MAIN_DIR:/var/lib/rebecca
@@ -417,6 +485,7 @@ install_command() {
         fi
     fi
     detect_os
+    prompt_branch_selection
     if ! command -v jq >/dev/null 2>&1; then
         install_package jq
     fi
