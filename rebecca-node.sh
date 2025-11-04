@@ -244,7 +244,21 @@ install_docker() {
 install_rebecca_node_script() {
     colorized_echo blue "Installing rebecca-node script"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
-    install -m 755 "$0" "$TARGET_PATH"
+
+    SOURCE_SCRIPT=""
+    if [[ -n "${BASH_SOURCE[0]}" && -f "${BASH_SOURCE[0]}" && -r "${BASH_SOURCE[0]}" ]]; then
+        SOURCE_SCRIPT="${BASH_SOURCE[0]}"
+    elif [[ -f "$0" && -r "$0" ]]; then
+        SOURCE_SCRIPT="$0"
+    fi
+
+    if [[ -n "$SOURCE_SCRIPT" ]]; then
+        install -m 755 "$SOURCE_SCRIPT" "$TARGET_PATH"
+    else
+        curl -sSL "$SCRIPT_URL" -o "$TARGET_PATH"
+        chmod 755 "$TARGET_PATH"
+    fi
+
     colorized_echo green "Rebecca-node script installed successfully at $TARGET_PATH"
 }
 
