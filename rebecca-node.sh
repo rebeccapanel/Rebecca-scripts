@@ -6,16 +6,16 @@ while [[ $# -gt 0 ]]; do
     key="$1"
     
     case $key in
-        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|uninstall-script|edit)
+        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|uninstall-script|install-service|edit)
             COMMAND="$1"
             shift # past argument
         ;;
         --name)
-            if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" ]]; then
+            if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" || "$COMMAND" == "install-service" ]]; then
                 APP_NAME="$2"
                 shift # past argument
             else
-                echo "Error: --name parameter is only allowed with 'install' or 'install-script' commands."
+                echo "Error: --name parameter is only allowed with 'install', 'install-script', or 'install-service' commands."
                 exit 1
             fi
             shift # past value
@@ -34,7 +34,7 @@ if [ -z "$NODE_IP" ]; then
     NODE_IP=$(curl -s -6 ifconfig.io)
 fi
 
-if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" ]] && [ -z "$APP_NAME" ]; then
+if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" || "$COMMAND" == "install-service" ]] && [ -z "$APP_NAME" ]; then
     APP_NAME="rebecca-node"
 fi
 # Set script name if APP_NAME is not set
@@ -58,8 +58,15 @@ DATA_MAIN_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 LAST_XRAY_CORES=5
 CERT_FILE="$DATA_DIR/cert.pem"
-FETCH_REPO="Gozargah/Rebecca-scripts"
+FETCH_REPO="rebeccapanel/Rebecca-scripts"
 SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca-node.sh"
+NODE_SERVICE_DIR="/usr/local/share/rebecca-node-maintenance"
+NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
+NODE_SERVICE_UNIT="/etc/systemd/system/rebecca-node-maint.service"
+NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-node/node_service.py"
+if [ -z "${REBECCA_NODE_SCRIPT_PORT:-}" ]; then
+    REBECCA_NODE_SCRIPT_PORT="3100"
+fi
 
 colorized_echo() {
     local color=$1
@@ -182,6 +189,67 @@ install_docker() {
     colorized_echo green "Docker installed successfully"
 }
 
+install_rebecca_node_service() {
+    check_running_as_root
+    colorized_echo blue "Installing Rebecca-node maintenance service"
+
+    detect_os
+    if ! command -v curl >/dev/null 2>&1; then
+        install_package curl
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        install_package python3
+    fi
+    if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
+        install_package python3-pip || true
+    fi
+
+    mkdir -p "$NODE_SERVICE_DIR"
+    curl -sSL "$NODE_SERVICE_SOURCE_URL" -o "$NODE_SERVICE_FILE"
+
+    PYTHON_BIN=$(command -v python3)
+    if [ -z "$PYTHON_BIN" ]; then
+        colorized_echo red "python3 is required but was not found."
+        exit 1
+    fi
+
+    $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
+    $PYTHON_BIN -m pip install fastapi 'uvicorn[standard]' >/dev/null 2>&1
+
+    cat > "$NODE_SERVICE_UNIT" <<EOF
+[Unit]
+Description=Rebecca-node Maintenance API
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$NODE_SERVICE_DIR
+Environment=REBECCA_NODE_SCRIPT_PORT=$REBECCA_NODE_SCRIPT_PORT
+Environment=REBECCA_NODE_SCRIPT_BIN=/usr/local/bin/$APP_NAME
+ExecStart=$PYTHON_BIN $NODE_SERVICE_FILE
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now rebecca-node-maint.service
+    colorized_echo green "Rebecca-node maintenance service installed and started"
+}
+
+uninstall_rebecca_node_service() {
+    if [ -f "$NODE_SERVICE_UNIT" ]; then
+        systemctl disable --now rebecca-node-maint.service >/dev/null 2>&1 || true
+        rm -f "$NODE_SERVICE_UNIT"
+        systemctl daemon-reload
+    fi
+    if [ -d "$NODE_SERVICE_DIR" ]; then
+        rm -rf "$NODE_SERVICE_DIR"
+    fi
+}
+
 install_rebecca_node_script() {
     colorized_echo blue "Installing rebecca script"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
@@ -249,16 +317,6 @@ install_rebecca_node() {
     
     print_info "Certificate saved to $CERT_FILE"
     
-    # Prompt the user to choose REST or another protocol
-    read -p "Do you want to use REST protocol? (Y/n): " -r use_rest
-    
-    # Default to "Y" if the user just presses ENTER
-    if [[ -z "$use_rest" || "$use_rest" =~ ^[Yy]$ ]]; then
-        USE_REST=true
-    else
-        USE_REST=false
-    fi
-    
     get_occupied_ports
     
     # Prompt the user to enter ports with occupation check
@@ -311,13 +369,6 @@ services:
       SERVICE_PORT: "$SERVICE_PORT"
       XRAY_API_PORT: "$XRAY_API_PORT"
 EOL
-    
-    # Add SERVICE_PROTOCOL line only if REST is selected
-    if [[ "$USE_REST" = true ]]; then
-        cat >> "$COMPOSE_FILE" <<EOL
-      SERVICE_PROTOCOL: "rest"
-EOL
-    fi
     
     cat >> "$COMPOSE_FILE" <<EOL
 
@@ -429,6 +480,7 @@ install_command() {
     detect_compose
     install_rebecca_node_script
     install_rebecca_node
+    install_rebecca_node_service
     up_rebecca_node
     follow_rebecca_node_logs
     echo "Use your IP: $NODE_IP and defaults ports: $SERVICE_PORT and $XRAY_API_PORT to setup your Rebecca Main Panel"
@@ -452,6 +504,7 @@ uninstall_command() {
     if is_rebecca_node_up; then
         down_rebecca_node
     fi
+    uninstall_rebecca_node_service
     uninstall_rebecca_node_script
     uninstall_rebecca_node
     uninstall_rebecca_node_docker_images
@@ -1006,10 +1059,12 @@ usage() {
     colorized_echo yellow "  restart         $(tput sgr0)– Restart services"
     colorized_echo yellow "  status          $(tput sgr0)– Show status"
     colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
-    colorized_echo yellow "  install         $(tput sgr0)– Install/reinstall Rebecca-node"
-    colorized_echo yellow "  update          $(tput sgr0)– Update to latest version"
+    colorized_echo yellow "  install         $(tput sgr0)- Install/reinstall Rebecca-node"
+    colorized_echo yellow "  install-service $(tput sgr0)- Install maintenance service"
+    colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
     colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Rebecca-node"
-    colorized_echo yellow "  install-script  $(tput sgr0)– Install Rebecca-node script"
+    colorized_echo yellow "  install-script  $(tput sgr0)- Install Rebecca-node script"
+    colorized_echo yellow "  update-script   $(tput sgr0)- Update Rebecca-node CLI script"
     colorized_echo yellow "  uninstall-script  $(tput sgr0)– Uninstall Rebecca-node script"
     colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
     colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
@@ -1072,8 +1127,14 @@ case "$COMMAND" in
     install-script)
         install_rebecca_node_script
     ;;
+    update-script)
+        install_rebecca_node_script
+    ;;
     uninstall-script)
         uninstall_rebecca_node_script
+    ;;
+    install-service)
+        install_rebecca_node_service
     ;;
     edit)
         edit_command

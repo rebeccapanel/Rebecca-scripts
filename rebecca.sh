@@ -10,6 +10,15 @@ DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 LAST_XRAY_CORES=10
+CERTS_BASE="/var/lib/$APP_NAME/certs"
+SERVICE_DIR="/usr/local/share/rebecca-maintenance"
+SERVICE_FILE="$SERVICE_DIR/main.py"
+SERVICE_UNIT="/etc/systemd/system/rebecca-maint.service"
+SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-scripts/main.py"
+if [ -z "$REBECCA_SCRIPT_PORT" ]; then
+    REBECCA_SCRIPT_PORT="3000"
+fi
+PARSED_DOMAINS=()
 
 colorized_echo() {
     local color=$1
@@ -123,11 +132,395 @@ detect_compose() {
 }
 
 install_rebecca_script() {
-    FETCH_REPO="Gozargah/Rebecca-scripts"
+    FETCH_REPO="rebeccapanel/Rebecca-scripts"
     SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca.sh"
     colorized_echo blue "Installing rebecca script"
     curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/rebecca
     colorized_echo green "rebecca script installed successfully"
+}
+
+install_rebecca_service() {
+    check_running_as_root
+    colorized_echo blue "Installing Rebecca maintenance service"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        install_package curl
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        install_package python3
+    fi
+    if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
+        install_package python3-pip || true
+    fi
+
+    mkdir -p "$SERVICE_DIR"
+    curl -sSL "$SERVICE_SOURCE_URL" -o "$SERVICE_FILE"
+
+    PYTHON_BIN=$(command -v python3)
+    if [ -z "$PYTHON_BIN" ]; then
+        colorized_echo red "python3 is required but was not found."
+        exit 1
+    fi
+
+    $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
+    $PYTHON_BIN -m pip install fastapi 'uvicorn[standard]' pyyaml >/dev/null 2>&1
+
+    cat > "$SERVICE_UNIT" <<EOF
+[Unit]
+Description=Rebecca Maintenance API
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$SERVICE_DIR
+Environment=REBECCA_APP_NAME=$APP_NAME
+Environment=REBECCA_APP_DIR=$APP_DIR
+Environment=REBECCA_DATA_DIR=$DATA_DIR
+Environment=REBECCA_ENV_FILE=$ENV_FILE
+Environment=REBECCA_COMPOSE_FILE=$COMPOSE_FILE
+Environment=REBECCA_BACKUP_DIR=$APP_DIR/backup
+Environment=REBECCA_SERVICE_NAME=$APP_NAME
+Environment=REBECCA_NODE_APP_DIR=/opt/rebecca-node
+Environment=REBECCA_NODE_COMPOSE_FILE=/opt/rebecca-node/docker-compose.yml
+Environment=REBECCA_NODE_SERVICE_NAME=rebecca-node
+Environment=REBECCA_SCRIPT_PORT=$REBECCA_SCRIPT_PORT
+ExecStart=$PYTHON_BIN $SERVICE_FILE
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now rebecca-maint.service
+    colorized_echo green "Rebecca maintenance service installed and started"
+}
+
+uninstall_rebecca_service() {
+    if [ -f "$SERVICE_UNIT" ]; then
+        systemctl disable --now rebecca-maint.service >/dev/null 2>&1 || true
+        rm -f "$SERVICE_UNIT"
+        systemctl daemon-reload
+    fi
+    if [ -d "$SERVICE_DIR" ]; then
+        rm -rf "$SERVICE_DIR"
+    fi
+}
+
+trim_string() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+validate_domain_format() {
+    local domain="$1"
+    if [[ ! "$domain" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        colorized_echo red "Invalid domain: $domain"
+        return 1
+    fi
+    return 0
+}
+
+install_ssl_dependencies() {
+    detect_os
+    local packages=("curl" "socat" "certbot")
+    for pkg in "${packages[@]}"; do
+        if ! command -v "$pkg" >/dev/null 2>&1; then
+            install_package "$pkg"
+        fi
+    done
+}
+
+ensure_acme_sh() {
+    if [ ! -d "$HOME/.acme.sh" ]; then
+        curl https://get.acme.sh | sh -s email="$1"
+        if [ -f "$HOME/.bashrc" ]; then
+            # shellcheck disable=SC1090
+            source "$HOME/.bashrc"
+        fi
+    fi
+}
+
+SSL_CERT_DIR=""
+
+issue_ssl_with_acme() {
+    local email="$1"
+    shift
+    local domains=("$@")
+    ensure_acme_sh "$email"
+
+    local args=""
+    for domain in "${domains[@]}"; do
+        args+=" -d $domain"
+    done
+
+    ~/.acme.sh/acme.sh --issue --standalone $args --accountemail "$email" || return 1
+
+    local primary="${domains[0]}"
+    SSL_CERT_DIR="$CERTS_BASE/$primary"
+    mkdir -p "$SSL_CERT_DIR"
+
+    ~/.acme.sh/acme.sh --install-cert -d "$primary" \
+        --key-file "$SSL_CERT_DIR/privkey.pem" \
+        --fullchain-file "$SSL_CERT_DIR/fullchain.pem" || return 1
+
+    echo "provider=acme" > "$SSL_CERT_DIR/.metadata"
+    echo "email=$email" >> "$SSL_CERT_DIR/.metadata"
+    echo "domains=${domains[*]}" >> "$SSL_CERT_DIR/.metadata"
+    echo "issued_at=$(date -u +%s)" >> "$SSL_CERT_DIR/.metadata"
+    return 0
+}
+
+issue_ssl_with_certbot() {
+    local email="$1"
+    shift
+    local domains=("$@")
+
+    local args=""
+    for domain in "${domains[@]}"; do
+        args+=" -d $domain"
+    done
+
+    certbot certonly --standalone $args --non-interactive --agree-tos --email "$email" || return 1
+
+    local primary="${domains[0]}"
+    SSL_CERT_DIR="$CERTS_BASE/$primary"
+    mkdir -p "$SSL_CERT_DIR"
+
+    cat "/etc/letsencrypt/live/$primary/privkey.pem" > "$SSL_CERT_DIR/privkey.pem"
+    cat "/etc/letsencrypt/live/$primary/fullchain.pem" > "$SSL_CERT_DIR/fullchain.pem"
+
+    echo "provider=certbot" > "$SSL_CERT_DIR/.metadata"
+    echo "email=$email" >> "$SSL_CERT_DIR/.metadata"
+    echo "domains=${domains[*]}" >> "$SSL_CERT_DIR/.metadata"
+    echo "issued_at=$(date -u +%s)" >> "$SSL_CERT_DIR/.metadata"
+    return 0
+}
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^$key" "$ENV_FILE" >/dev/null 2>&1; then
+        sed -i "s|^$key.*|$key = \"$value\"|" "$ENV_FILE"
+    else
+        echo "$key = \"$value\"" >> "$ENV_FILE"
+    fi
+}
+
+sync_ssl_env_paths() {
+    local cert_dir="$1"
+    set_env_value "UVICORN_SSL_CERTFILE" "$cert_dir/fullchain.pem"
+    set_env_value "UVICORN_SSL_KEYFILE" "$cert_dir/privkey.pem"
+    set_env_value "UVICORN_SSL_CA_TYPE" "public"
+}
+
+perform_ssl_issue() {
+    local email="$1"
+    local preferred="${2:-auto}"
+    shift 2
+    local domains=("$@")
+    local provider_used=""
+
+    if [ ${#domains[@]} -eq 0 ]; then
+        colorized_echo red "At least one domain is required for SSL issuance."
+        return 1
+    fi
+
+    install_ssl_dependencies
+    mkdir -p "$CERTS_BASE"
+
+    if [ "$preferred" = "acme" ]; then
+        issue_ssl_with_acme "$email" "${domains[@]}" || return 1
+        provider_used="acme"
+    elif [ "$preferred" = "certbot" ]; then
+        issue_ssl_with_certbot "$email" "${domains[@]}" || return 1
+        provider_used="certbot"
+    else
+        if issue_ssl_with_acme "$email" "${domains[@]}"; then
+            provider_used="acme"
+        else
+            colorized_echo yellow "acme.sh issuance failed, falling back to certbot..."
+            issue_ssl_with_certbot "$email" "${domains[@]}" || return 1
+            provider_used="certbot"
+        fi
+    fi
+
+    sync_ssl_env_paths "$SSL_CERT_DIR"
+    colorized_echo green "SSL certificate installed at $SSL_CERT_DIR using $provider_used"
+    return 0
+}
+
+parse_domains_input() {
+    local input="$1"
+    PARSED_DOMAINS=()
+    IFS=',' read -ra raw_domains <<< "$input"
+    for entry in "${raw_domains[@]}"; do
+        local domain
+        domain=$(trim_string "$entry")
+        if [ -z "$domain" ]; then
+            continue
+        fi
+        validate_domain_format "$domain" || return 1
+        PARSED_DOMAINS+=("$domain")
+    done
+    if [ ${#PARSED_DOMAINS[@]} -eq 0 ]; then
+        colorized_echo red "No valid domains provided."
+        return 1
+    fi
+}
+
+prompt_ssl_setup() {
+    read -p "Do you want to configure SSL certificates now? (y/N): " ssl_answer
+    if [[ ! "$ssl_answer" =~ ^[Yy]$ ]]; then
+        return
+    fi
+    read -p "Enter email for certificate notifications: " ssl_email
+    read -p "Enter domain(s) separated by comma: " ssl_domains
+    ssl_command issue --email "$ssl_email" --domains "$ssl_domains" --non-interactive
+}
+
+ssl_issue() {
+    local email=""
+    local domains_input=""
+    local provider="auto"
+    local interactive=true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --email=*)
+                email="${1#*=}"
+                shift
+                ;;
+            --email)
+                email="$2"
+                shift 2
+                ;;
+            --domains=*)
+                domains_input="${1#*=}"
+                shift
+                ;;
+            --domains)
+                domains_input="$2"
+                shift 2
+                ;;
+            --provider=*)
+                provider="${1#*=}"
+                shift
+                ;;
+            --provider)
+                provider="$2"
+                shift 2
+                ;;
+            --non-interactive)
+                interactive=false
+                shift
+                ;;
+            *)
+                colorized_echo red "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    if [ "$interactive" = true ]; then
+        if [ -z "$email" ]; then
+            read -p "Enter email address: " email
+        fi
+        if [ -z "$domains_input" ]; then
+            read -p "Enter domain(s) separated by comma: " domains_input
+        fi
+    else
+        if [ -z "$email" ] || [ -z "$domains_input" ]; then
+            colorized_echo red "Email and domains are required when using non-interactive mode."
+            return 1
+        fi
+    fi
+
+    parse_domains_input "$domains_input" || return 1
+    perform_ssl_issue "$email" "$provider" "${PARSED_DOMAINS[@]}"
+}
+
+get_domain_from_env() {
+    if [ ! -f "$ENV_FILE" ]; then
+        return
+    fi
+    local line
+    line=$(grep "^UVICORN_SSL_CERTFILE" "$ENV_FILE" | tail -n 1 | cut -d'=' -f2-)
+    line=$(echo "$line" | tr -d ' "')
+    if [ -z "$line" ]; then
+        return
+    fi
+    basename "$(dirname "$line")"
+}
+
+ssl_renew() {
+    local target_domain=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --domain=*)
+                target_domain="${1#*=}"
+                shift
+                ;;
+            --domain)
+                target_domain="$2"
+                shift 2
+                ;;
+            *)
+                colorized_echo red "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    if [ -z "$target_domain" ]; then
+        target_domain=$(get_domain_from_env)
+    fi
+
+    if [ -z "$target_domain" ]; then
+        colorized_echo red "Unable to detect domain. Please specify --domain example.com"
+        return 1
+    fi
+
+    local metadata="$CERTS_BASE/$target_domain/.metadata"
+    if [ ! -f "$metadata" ]; then
+        colorized_echo red "Metadata not found for domain $target_domain"
+        return 1
+    fi
+
+    local provider email domains_line
+    provider=$(grep '^provider=' "$metadata" | cut -d'=' -f2-)
+    email=$(grep '^email=' "$metadata" | cut -d'=' -f2-)
+    domains_line=$(grep '^domains=' "$metadata" | cut -d'=' -f2-)
+
+    if [ -z "$email" ] || [ -z "$domains_line" ]; then
+        colorized_echo red "Metadata is incomplete for $target_domain"
+        return 1
+    fi
+
+    read -ra stored_domains <<< "$domains_line"
+    perform_ssl_issue "$email" "$provider" "${stored_domains[@]}" || return 1
+    colorized_echo green "SSL certificate renewed for $target_domain"
+}
+
+ssl_command() {
+    local action="$1"
+    shift || true
+
+    case "$action" in
+        issue)
+            ssl_issue "$@"
+            ;;
+        renew)
+            ssl_renew "$@"
+            ;;
+        *)
+            colorized_echo blue "Usage: rebecca ssl <issue|renew> [options]"
+            ;;
+    esac
 }
 
 is_rebecca_installed() {
@@ -1007,6 +1400,12 @@ prompt_for_rebecca_password() {
 install_command() {
     check_running_as_root
 
+    if [[ "${1:-}" == "service" ]]; then
+        shift
+        install_rebecca_service "$@"
+        return
+    fi
+
     # Default values
     database_type="sqlite"
     rebecca_version="latest"
@@ -1069,10 +1468,11 @@ install_command() {
     fi
     detect_compose
     install_rebecca_script
+    install_rebecca_service
     # Function to check if a version exists in the GitHub releases
     check_version_exists() {
         local version=$1
-        repo_url="https://api.github.com/repos/Gozargah/Rebecca/releases"
+        repo_url="https://api.github.com/repos/rebeccapanel/Rebecca/releases"
         if [ "$version" == "latest" ] || [ "$version" == "dev" ]; then
             return 0
         fi
@@ -1100,6 +1500,7 @@ install_command() {
         echo "Invalid version format. Please enter a valid version (e.g. v0.5.2)"
         exit 1
     fi
+    prompt_ssl_setup
     up_rebecca
     follow_rebecca_logs
 }
@@ -1231,6 +1632,7 @@ uninstall_command() {
         down_rebecca
     fi
     uninstall_rebecca_script
+    uninstall_rebecca_service
     uninstall_rebecca
     uninstall_rebecca_docker_images
     
@@ -1472,7 +1874,7 @@ update_command() {
 }
 
 update_rebecca_script() {
-    FETCH_REPO="Gozargah/Rebecca-scripts"
+    FETCH_REPO="rebeccapanel/Rebecca-scripts"
     SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca.sh"
     colorized_echo blue "Updating rebecca script"
     curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/rebecca
@@ -1536,16 +1938,19 @@ usage() {
     colorized_echo yellow "  status          $(tput sgr0)– Show status"
     colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
     colorized_echo yellow "  cli             $(tput sgr0)– Rebecca CLI"
-    colorized_echo yellow "  install         $(tput sgr0)– Install Rebecca"
-    colorized_echo yellow "  update          $(tput sgr0)– Update to latest version"
+    colorized_echo yellow "  install         $(tput sgr0)- Install Rebecca"
+    colorized_echo yellow "  install service $(tput sgr0)- Install only the maintenance service"
+    colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
     colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Rebecca"
-    colorized_echo yellow "  install-script  $(tput sgr0)– Install Rebecca script"
-    colorized_echo yellow "  backup          $(tput sgr0)– Manual backup launch"
+    colorized_echo yellow "  install-script  $(tput sgr0)- Install Rebecca script"
+    colorized_echo yellow "  update-script   $(tput sgr0)- Update Rebecca CLI script"
+    colorized_echo yellow "  backup          $(tput sgr0)- Manual backup launch"
     colorized_echo yellow "  backup-service  $(tput sgr0)– Rebecca Backupservice to backup to TG, and a new job in crontab"
-    colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
-    colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi editor)"
-    colorized_echo yellow "  edit-env        $(tput sgr0)– Edit environment file (via nano or vi editor)"
-    colorized_echo yellow "  help            $(tput sgr0)– Show this help message"
+    colorized_echo yellow "  core-update     $(tput sgr0)- Update/Change Xray core"
+    colorized_echo yellow "  edit            $(tput sgr0)- Edit docker-compose.yml (via nano or vi editor)"
+    colorized_echo yellow "  edit-env        $(tput sgr0)- Edit environment file (via nano or vi editor)"
+    colorized_echo yellow "  ssl             $(tput sgr0)- Issue or renew SSL certificates"
+    colorized_echo yellow "  help            $(tput sgr0)- Show this help message"
     
     
     echo
@@ -1575,14 +1980,20 @@ case "$1" in
         shift; backup_service "$@";;
     install)
         shift; install_command "$@";;
+    install-service)
+        shift; install_rebecca_service "$@";;
     update)
         shift; update_command "$@";;
     uninstall)
         shift; uninstall_command "$@";;
     install-script)
         shift; install_rebecca_script "$@";;
+    update-script)
+        shift; install_rebecca_script "$@";;
     core-update)
         shift; update_core_command "$@";;
+    ssl)
+        shift; ssl_command "$@";;
     edit)
         shift; edit_command "$@";;
     edit-env)
