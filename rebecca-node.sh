@@ -59,6 +59,7 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 LAST_XRAY_CORES=5
 CERT_FILE="$DATA_DIR/cert.pem"
 FETCH_REPO="rebeccapanel/Rebecca-scripts"
+<<<<<<< HEAD
 SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca-node.sh"
 NODE_SERVICE_DIR="/usr/local/share/rebecca-node-maintenance"
 NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
@@ -67,6 +68,9 @@ NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebe
 if [ -z "${REBECCA_NODE_SCRIPT_PORT:-}" ]; then
     REBECCA_NODE_SCRIPT_PORT="3100"
 fi
+=======
+BRANCH_FILE="$APP_DIR/.branch"
+>>>>>>> 8fe4f2299c3503434c6a9c070a4d4b803562a4af
 
 colorized_echo() {
     local color=$1
@@ -97,6 +101,64 @@ colorized_echo() {
         ;;
     esac
 }
+
+set_branch_variables() {
+    local selected_branch="${1:-master}"
+    case "$selected_branch" in
+        dev|development)
+            BRANCH="dev"
+            IMAGE_TAG="dev"
+            DOCKER_IMAGE="rebeccapanel/rebecca-node:dev"
+        ;;
+        *)
+            BRANCH="master"
+            IMAGE_TAG="latest"
+            DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
+        ;;
+    esac
+    SCRIPT_BRANCH="master"
+    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/$SCRIPT_BRANCH/rebecca-node.sh"
+}
+
+prompt_branch_selection() {
+    local question
+    if [[ "$BRANCH" == "dev" ]]; then
+        question="Keep using the dev branch? (Y/n): "
+    else
+        question="Do you want to install Rebecca-node using the dev branch? (y/N): "
+    fi
+    read -p "$question" -r branch_answer
+    if [[ "$BRANCH" == "dev" ]]; then
+        if [[ -z "$branch_answer" || "$branch_answer" =~ ^[Yy]$ ]]; then
+            set_branch_variables dev
+        else
+            set_branch_variables master
+        fi
+    else
+        if [[ "$branch_answer" =~ ^[Yy]$ ]]; then
+            set_branch_variables dev
+        else
+            set_branch_variables master
+        fi
+    fi
+    colorized_echo blue "Selected branch: $BRANCH (image tag: $IMAGE_TAG)"
+}
+
+BRANCH="master"
+IMAGE_TAG="latest"
+SCRIPT_BRANCH="master"
+DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
+SCRIPT_URL=""
+if [ -f "$BRANCH_FILE" ]; then
+    saved_branch=$(tr -d '[:space:]' < "$BRANCH_FILE")
+    if [[ -n "$saved_branch" ]]; then
+        set_branch_variables "$saved_branch"
+    else
+        set_branch_variables "$BRANCH"
+    fi
+else
+    set_branch_variables "$BRANCH"
+fi
 
 check_running_as_root() {
     if [ "$(id -u)" != "0" ]; then
@@ -251,13 +313,34 @@ uninstall_rebecca_node_service() {
 }
 
 install_rebecca_node_script() {
-    colorized_echo blue "Installing rebecca script"
+    colorized_echo blue "Installing rebecca-node script"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
-    curl -sSL $SCRIPT_URL -o $TARGET_PATH
-    
-    sed -i "s/^APP_NAME=.*/APP_NAME=\"$APP_NAME\"/" $TARGET_PATH
-    
-    chmod 755 $TARGET_PATH
+
+    SOURCE_SCRIPT=""
+    if [[ -n "${BASH_SOURCE[0]}" && -f "${BASH_SOURCE[0]}" && -r "${BASH_SOURCE[0]}" ]]; then
+        SOURCE_SCRIPT="${BASH_SOURCE[0]}"
+    elif [[ -f "$0" && -r "$0" ]]; then
+        SOURCE_SCRIPT="$0"
+    fi
+
+    if [[ -n "$SOURCE_SCRIPT" ]]; then
+        install -m 755 "$SOURCE_SCRIPT" "$TARGET_PATH"
+    else
+        TEMP_SCRIPT=$(mktemp)
+        if ! curl -fsSL "$SCRIPT_URL" -o "$TEMP_SCRIPT"; then
+            colorized_echo red "Failed to download script from $SCRIPT_URL"
+            rm -f "$TEMP_SCRIPT"
+            exit 1
+        fi
+        if head -n 1 "$TEMP_SCRIPT" | grep -qi "<!DOCTYPE html>"; then
+            colorized_echo red "Unexpected response while downloading script (HTML received)."
+            rm -f "$TEMP_SCRIPT"
+            exit 1
+        fi
+        install -m 755 "$TEMP_SCRIPT" "$TARGET_PATH"
+        rm -f "$TEMP_SCRIPT"
+    fi
+
     colorized_echo green "Rebecca-node script installed successfully at $TARGET_PATH"
 }
 
@@ -294,6 +377,7 @@ install_rebecca_node() {
     mkdir -p "$DATA_DIR"
     mkdir -p "$APP_DIR"
     mkdir -p "$DATA_MAIN_DIR"
+    echo "$BRANCH" > "$BRANCH_FILE"
     
     # Проверка на существование файла перед его очисткой
     if [ -f "$CERT_FILE" ]; then
@@ -317,6 +401,36 @@ install_rebecca_node() {
     
     print_info "Certificate saved to $CERT_FILE"
     
+<<<<<<< HEAD
+=======
+    SERVICE_PROTOCOL_VALUE="grpc"
+    echo
+    colorized_echo blue "Select the node service protocol:"
+    echo "  1) gRPC (default)"
+    echo "  2) REST"
+    echo "  3) RPyc"
+    while true; do
+        read -p "Enter choice [1]: " -r protocol_choice
+        case "${protocol_choice,,}" in
+            ""|1|"grpc")
+                SERVICE_PROTOCOL_VALUE="grpc"
+                break
+                ;;
+            2|"rest")
+                SERVICE_PROTOCOL_VALUE="rest"
+                break
+                ;;
+            3|"rpyc")
+                SERVICE_PROTOCOL_VALUE="rpyc"
+                break
+                ;;
+            *)
+                colorized_echo red "Invalid option. Please select 1, 2, or 3."
+                ;;
+        esac
+    done
+    
+>>>>>>> 8fe4f2299c3503434c6a9c070a4d4b803562a4af
     get_occupied_ports
     
     # Prompt the user to enter ports with occupation check
@@ -361,19 +475,23 @@ install_rebecca_node() {
 services:
   rebecca-node:
     container_name: $APP_NAME
-    image: rebeccapanel/rebecca-node:latest
+    image: $DOCKER_IMAGE
     restart: always
     network_mode: host
     environment:
-      SSL_CLIENT_CERT_FILE: "/var/lib/rebecca-node/cert.pem"
+      SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/cert.pem"
       SERVICE_PORT: "$SERVICE_PORT"
       XRAY_API_PORT: "$XRAY_API_PORT"
+<<<<<<< HEAD
 EOL
     
     cat >> "$COMPOSE_FILE" <<EOL
+=======
+      SERVICE_PROTOCOL: "$SERVICE_PROTOCOL_VALUE"
+>>>>>>> 8fe4f2299c3503434c6a9c070a4d4b803562a4af
 
     volumes:
-      - $DATA_MAIN_DIR:/var/lib/rebecca
+      - $DATA_DIR:/var/lib/marzban-node
       - $DATA_DIR:/var/lib/rebecca-node
 EOL
     colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
@@ -468,6 +586,7 @@ install_command() {
         fi
     fi
     detect_os
+    prompt_branch_selection
     if ! command -v jq >/dev/null 2>&1; then
         install_package jq
     fi
