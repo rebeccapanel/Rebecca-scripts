@@ -79,6 +79,28 @@ update_file_references() {
     fi
 }
 
+ensure_database_name_updated() {
+    local env_file="$NEW_APP_DIR/.env"
+    local compose_file="$NEW_APP_DIR/docker-compose.yml"
+
+    if [ -f "$env_file" ]; then
+        sed -i \
+            -e 's/^MYSQL_DATABASE\s*=.*/MYSQL_DATABASE=rebecca/' \
+            -e 's/^MYSQL_DATABASE\s*=\s*\".*\"/MYSQL_DATABASE="rebecca"/' \
+            "$env_file"
+        sed -i \
+            -e 's/\/marzban\"/\/rebecca"/g' \
+            "$env_file"
+    fi
+
+    if [ -f "$compose_file" ]; then
+        sed -i \
+            -e 's/MYSQL_DATABASE:\s*marzban/MYSQL_DATABASE: rebecca/g' \
+            -e 's/MYSQL_DATABASE:\s*\"marzban\"/MYSQL_DATABASE: "rebecca"/g' \
+            "$compose_file"
+    fi
+}
+
 migrate_systemd_service() {
     local service_path="/etc/systemd/system/${OLD_SERVICE_NAME}.service"
     if [ -f "$service_path" ]; then
@@ -150,6 +172,7 @@ main() {
 
     update_file_references "$NEW_APP_DIR/docker-compose.yml"
     update_file_references "$NEW_APP_DIR/.env"
+    ensure_database_name_updated
 
     migrate_systemd_service
     install_rebecca_cli
