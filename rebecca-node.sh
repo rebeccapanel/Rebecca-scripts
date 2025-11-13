@@ -63,7 +63,7 @@ BRANCH_FILE="$APP_DIR/.branch"
 NODE_SERVICE_DIR="/usr/local/share/rebecca-node-maintenance"
 NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
 NODE_SERVICE_UNIT="/etc/systemd/system/rebecca-node-maint.service"
-NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-node/node_service.py"
+NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/node_service.py"
 if [ -z "${REBECCA_NODE_SCRIPT_PORT:-}" ]; then
     REBECCA_NODE_SCRIPT_PORT="3100"
 fi
@@ -105,13 +105,13 @@ set_branch_variables() {
             BRANCH="dev"
             IMAGE_TAG="dev"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:dev"
-            NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/dev/Rebecca-node/node_service.py"
+            NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/dev/node_service.py"
         ;;
         *)
             BRANCH="master"
             IMAGE_TAG="latest"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
-            NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-node/node_service.py"
+            NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/node_service.py"
         ;;
     esac
     SCRIPT_BRANCH="master"
