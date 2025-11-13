@@ -6,7 +6,7 @@ while [[ $# -gt 0 ]]; do
     key="$1"
     
     case $key in
-        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|update-script|uninstall-script|install-service|service-status|service-logs|edit)
+        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|update-script|uninstall-script|install-service|uninstall-service|service-status|service-logs|edit)
             COMMAND="$1"
             shift # past argument
         ;;
@@ -105,11 +105,13 @@ set_branch_variables() {
             BRANCH="dev"
             IMAGE_TAG="dev"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:dev"
+            NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/dev/Rebecca-node/node_service.py"
         ;;
         *)
             BRANCH="master"
             IMAGE_TAG="latest"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
+            NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-node/node_service.py"
         ;;
     esac
     SCRIPT_BRANCH="master"
@@ -268,9 +270,29 @@ install_rebecca_node_service() {
     colorized_echo blue "Creating service directory..."
     mkdir -p "$NODE_SERVICE_DIR"
     
-    colorized_echo blue "Downloading service file..."
+    colorized_echo blue "Downloading service file from $NODE_SERVICE_SOURCE_URL..."
     if curl -sSL "$NODE_SERVICE_SOURCE_URL" -o "$NODE_SERVICE_FILE"; then
-        colorized_echo green "Service file downloaded successfully"
+        # Check if the downloaded file is valid Python (not HTML error page)
+        if head -n 1 "$NODE_SERVICE_FILE" | grep -qi "<!DOCTYPE\|<html"; then
+            colorized_echo red "Downloaded file is not a valid Python script (got HTML error page)"
+            colorized_echo red "URL: $NODE_SERVICE_SOURCE_URL"
+            rm -f "$NODE_SERVICE_FILE"
+            colorized_echo yellow "This usually means the file doesn't exist on the specified branch"
+            colorized_echo yellow "Trying to use local copy if available..."
+            
+            # Try to find local copy
+            LOCAL_COPY="../Rebecca-node/node_service.py"
+            if [ -f "$LOCAL_COPY" ]; then
+                colorized_echo blue "Found local copy, using it..."
+                cp "$LOCAL_COPY" "$NODE_SERVICE_FILE"
+                colorized_echo green "Service file copied from local repository"
+            else
+                colorized_echo red "No local copy found. Please ensure the file exists in the repository"
+                exit 1
+            fi
+        else
+            colorized_echo green "Service file downloaded successfully"
+        fi
     else
         colorized_echo red "Failed to download service file"
         exit 1
@@ -1209,6 +1231,7 @@ usage() {
     colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
     colorized_echo yellow "  install         $(tput sgr0)- Install/reinstall Rebecca-node"
     colorized_echo yellow "  install-service $(tput sgr0)- Install maintenance service"
+    colorized_echo yellow "  uninstall-service $(tput sgr0)- Uninstall maintenance service"
     colorized_echo yellow "  service-status  $(tput sgr0)- Show maintenance service status"
     colorized_echo yellow "  service-logs    $(tput sgr0)- Show maintenance service logs"
     colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
@@ -1300,6 +1323,10 @@ case "$COMMAND" in
     ;;
     install-service)
         install_rebecca_node_service
+    ;;
+    uninstall-service)
+        uninstall_rebecca_node_service
+        colorized_echo green "Rebecca-node maintenance service uninstalled successfully"
     ;;
     service-status)
         service_status_command
