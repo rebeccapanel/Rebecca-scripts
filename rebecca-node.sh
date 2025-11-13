@@ -327,29 +327,35 @@ install_rebecca_node_service() {
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
     
     if [ -f "$NODE_SERVICE_REQUIREMENTS" ]; then
-        colorized_echo blue "Installing packages from requirements.txt..."
-        # Use --ignore-installed to handle debian packages and --force-reinstall for conflicting versions
-        if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" --break-system-packages --force-reinstall --ignore-installed 2>&1 | grep -E "Successfully installed|ERROR" || true; then
+        colorized_echo blue "Installing packages from requirements.txt with force reinstall..."
+        # Force reinstall all packages to ensure correct versions
+        if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" --break-system-packages --force-reinstall --no-cache-dir 2>&1 | tee /tmp/pip_install.log | tail -5; then
             colorized_echo green "Python dependencies installed successfully"
         else
-            colorized_echo yellow "Retrying with different flags..."
-            if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" --break-system-packages --ignore-installed 2>&1 | grep -E "Successfully installed|ERROR" || true; then
-                colorized_echo green "Python dependencies installed successfully"
+            colorized_echo red "Failed to install from requirements.txt, check /tmp/pip_install.log"
+            colorized_echo yellow "Trying fallback installation..."
+            # Install with specific compatible versions
+            if $PYTHON_BIN -m pip install --break-system-packages --force-reinstall --no-cache-dir \
+                'typing-extensions==4.12.2' \
+                'pydantic-core==2.27.2' \
+                'pydantic==2.10.5' \
+                'fastapi==0.115.2' \
+                'uvicorn[standard]==0.27.0.post1' 2>&1 | tail -5; then
+                colorized_echo green "Fallback installation successful"
             else
-                colorized_echo red "Failed to install from requirements.txt, trying fallback..."
-                # Install with specific versions
-                if $PYTHON_BIN -m pip install --break-system-packages --force-reinstall 'typing-extensions>=4.12.0' 'pydantic-core>=2.27.0' 'pydantic>=2.10.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' 2>&1; then
-                    colorized_echo green "Fallback installation successful"
-                else
-                    colorized_echo red "Failed to install dependencies"
-                    exit 1
-                fi
+                colorized_echo red "Failed to install dependencies"
+                exit 1
             fi
         fi
     else
         colorized_echo blue "Using fallback package installation..."
-        # Install with specific versions
-        if $PYTHON_BIN -m pip install --break-system-packages --force-reinstall 'typing-extensions>=4.12.0' 'pydantic-core>=2.27.0' 'pydantic>=2.10.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' 2>&1 | grep -v "Requirement already satisfied"; then
+        # Install with specific compatible versions
+        if $PYTHON_BIN -m pip install --break-system-packages --force-reinstall --no-cache-dir \
+            'typing-extensions==4.12.2' \
+            'pydantic-core==2.27.2' \
+            'pydantic==2.10.5' \
+            'fastapi==0.115.2' \
+            'uvicorn[standard]==0.27.0.post1' 2>&1 | tail -5; then
             colorized_echo green "Python dependencies installed successfully"
         else
             colorized_echo red "Failed to install dependencies"
