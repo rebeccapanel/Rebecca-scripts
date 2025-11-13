@@ -323,30 +323,36 @@ install_rebecca_node_service() {
     colorized_echo blue "Installing Python dependencies..."
     
     # Upgrade pip first
+    $PYTHON_BIN -m pip install --upgrade pip --break-system-packages >/dev/null 2>&1 || \
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
     
     if [ -f "$NODE_SERVICE_REQUIREMENTS" ]; then
         colorized_echo blue "Installing packages from requirements.txt..."
-        if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" 2>&1 | grep -v "Requirement already satisfied"; then
+        if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" --break-system-packages 2>&1 | grep -v "Requirement already satisfied"; then
             colorized_echo green "Python dependencies installed successfully"
         else
-            colorized_echo red "Failed to install from requirements.txt, trying fallback..."
-            # Remove conflicting packages
-            $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn >/dev/null 2>&1 || true
-            # Install with specific versions
-            if $PYTHON_BIN -m pip install 'typing-extensions>=4.9.0' 'pydantic>=2.6.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' 2>&1; then
-                colorized_echo green "Fallback installation successful"
+            colorized_echo yellow "Retrying without --break-system-packages flag..."
+            if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" 2>&1 | grep -v "Requirement already satisfied"; then
+                colorized_echo green "Python dependencies installed successfully"
             else
-                colorized_echo red "Failed to install dependencies"
-                exit 1
+                colorized_echo red "Failed to install from requirements.txt, trying fallback..."
+                # Remove conflicting packages
+                $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn --break-system-packages >/dev/null 2>&1 || true
+                # Install with specific versions
+                if $PYTHON_BIN -m pip install 'typing-extensions>=4.9.0' 'pydantic>=2.6.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' --break-system-packages 2>&1; then
+                    colorized_echo green "Fallback installation successful"
+                else
+                    colorized_echo red "Failed to install dependencies"
+                    exit 1
+                fi
             fi
         fi
     else
         colorized_echo blue "Using fallback package installation..."
         # Remove conflicting packages
-        $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn >/dev/null 2>&1 || true
+        $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn --break-system-packages >/dev/null 2>&1 || true
         # Install with specific versions
-        if $PYTHON_BIN -m pip install 'typing-extensions>=4.9.0' 'pydantic>=2.6.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' 2>&1 | grep -v "Requirement already satisfied"; then
+        if $PYTHON_BIN -m pip install 'typing-extensions>=4.9.0' 'pydantic>=2.6.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' --break-system-packages 2>&1 | grep -v "Requirement already satisfied"; then
             colorized_echo green "Python dependencies installed successfully"
         else
             colorized_echo red "Failed to install dependencies"
