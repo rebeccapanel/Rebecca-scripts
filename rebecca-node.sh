@@ -306,8 +306,18 @@ install_rebecca_node_service() {
 
     colorized_echo blue "Installing Python dependencies..."
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
-    if $PYTHON_BIN -m pip install fastapi 'uvicorn[standard]' >/dev/null 2>&1; then
-        colorized_echo green "Python dependencies installed"
+    
+    # Upgrade typing_extensions first to ensure compatibility
+    colorized_echo blue "Upgrading typing-extensions..."
+    $PYTHON_BIN -m pip install --upgrade typing-extensions >/dev/null 2>&1 || true
+    
+    # Install or upgrade pydantic to ensure compatibility
+    colorized_echo blue "Installing pydantic..."
+    $PYTHON_BIN -m pip install --upgrade 'pydantic>=2.0' >/dev/null 2>&1 || true
+    
+    # Install fastapi and uvicorn
+    if $PYTHON_BIN -m pip install --upgrade fastapi 'uvicorn[standard]' >/dev/null 2>&1; then
+        colorized_echo green "Python dependencies installed successfully"
     else
         colorized_echo yellow "Warning: Some Python dependencies may not have installed correctly"
     fi
