@@ -59,8 +59,7 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 LAST_XRAY_CORES=5
 CERT_FILE="$DATA_DIR/cert.pem"
 FETCH_REPO="rebeccapanel/Rebecca-scripts"
-<<<<<<< HEAD
-SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca-node.sh"
+BRANCH_FILE="$APP_DIR/.branch"
 NODE_SERVICE_DIR="/usr/local/share/rebecca-node-maintenance"
 NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
 NODE_SERVICE_UNIT="/etc/systemd/system/rebecca-node-maint.service"
@@ -68,9 +67,6 @@ NODE_SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebe
 if [ -z "${REBECCA_NODE_SCRIPT_PORT:-}" ]; then
     REBECCA_NODE_SCRIPT_PORT="3100"
 fi
-=======
-BRANCH_FILE="$APP_DIR/.branch"
->>>>>>> 8fe4f2299c3503434c6a9c070a4d4b803562a4af
 
 colorized_echo() {
     local color=$1
@@ -401,8 +397,6 @@ install_rebecca_node() {
     
     print_info "Certificate saved to $CERT_FILE"
     
-<<<<<<< HEAD
-=======
     SERVICE_PROTOCOL_VALUE="grpc"
     echo
     colorized_echo blue "Select the node service protocol:"
@@ -430,7 +424,6 @@ install_rebecca_node() {
         esac
     done
     
->>>>>>> 8fe4f2299c3503434c6a9c070a4d4b803562a4af
     get_occupied_ports
     
     # Prompt the user to enter ports with occupation check
@@ -482,13 +475,7 @@ services:
       SSL_CLIENT_CERT_FILE: "/var/lib/marzban-node/cert.pem"
       SERVICE_PORT: "$SERVICE_PORT"
       XRAY_API_PORT: "$XRAY_API_PORT"
-<<<<<<< HEAD
-EOL
-    
-    cat >> "$COMPOSE_FILE" <<EOL
-=======
       SERVICE_PROTOCOL: "$SERVICE_PROTOCOL_VALUE"
->>>>>>> 8fe4f2299c3503434c6a9c070a4d4b803562a4af
 
     volumes:
       - $DATA_DIR:/var/lib/marzban-node
