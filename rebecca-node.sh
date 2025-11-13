@@ -62,8 +62,10 @@ FETCH_REPO="rebeccapanel/Rebecca-scripts"
 BRANCH_FILE="$APP_DIR/.branch"
 NODE_SERVICE_DIR="/usr/local/share/rebecca-node-maintenance"
 NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
+NODE_SERVICE_REQUIREMENTS="$NODE_SERVICE_DIR/requirements.txt"
 NODE_SERVICE_UNIT="/etc/systemd/system/rebecca-node-maint.service"
 NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/node_service.py"
+NODE_SERVICE_REQUIREMENTS_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/requirements.txt"
 if [ -z "${REBECCA_NODE_SCRIPT_PORT:-}" ]; then
     REBECCA_NODE_SCRIPT_PORT="3100"
 fi
@@ -106,12 +108,14 @@ set_branch_variables() {
             IMAGE_TAG="dev"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:dev"
             NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/dev/node_service.py"
+            NODE_SERVICE_REQUIREMENTS_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/dev/requirements.txt"
         ;;
         *)
             BRANCH="master"
             IMAGE_TAG="latest"
             DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
             NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/node_service.py"
+            NODE_SERVICE_REQUIREMENTS_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/requirements.txt"
         ;;
     esac
     SCRIPT_BRANCH="master"
@@ -297,6 +301,18 @@ install_rebecca_node_service() {
         colorized_echo red "Failed to download service file"
         exit 1
     fi
+    
+    colorized_echo blue "Downloading requirements.txt from $NODE_SERVICE_REQUIREMENTS_URL..."
+    if curl -sSL "$NODE_SERVICE_REQUIREMENTS_URL" -o "$NODE_SERVICE_REQUIREMENTS"; then
+        if head -n 1 "$NODE_SERVICE_REQUIREMENTS" | grep -qi "<!DOCTYPE\|<html"; then
+            colorized_echo yellow "Failed to download requirements.txt, will use fallback packages"
+            rm -f "$NODE_SERVICE_REQUIREMENTS"
+        else
+            colorized_echo green "Requirements file downloaded successfully"
+        fi
+    else
+        colorized_echo yellow "Failed to download requirements.txt, will use fallback packages"
+    fi
 
     PYTHON_BIN=$(command -v python3)
     if [ -z "$PYTHON_BIN" ]; then
@@ -306,31 +322,34 @@ install_rebecca_node_service() {
 
     colorized_echo blue "Installing Python dependencies..."
     
-    # Remove conflicting packages first
-    colorized_echo blue "Cleaning up old dependencies..."
-    $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn >/dev/null 2>&1 || true
-    
-    # Upgrade pip
+    # Upgrade pip first
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
     
-    # Install fresh versions with --force-reinstall to ensure compatibility
-    colorized_echo blue "Installing typing-extensions..."
-    $PYTHON_BIN -m pip install --force-reinstall --no-cache-dir 'typing-extensions>=4.8.0' >/dev/null 2>&1
-    
-    colorized_echo blue "Installing pydantic..."
-    $PYTHON_BIN -m pip install --force-reinstall --no-cache-dir 'pydantic>=2.0' >/dev/null 2>&1
-    
-    colorized_echo blue "Installing fastapi and uvicorn..."
-    if $PYTHON_BIN -m pip install --no-cache-dir fastapi 'uvicorn[standard]' >/dev/null 2>&1; then
-        colorized_echo green "Python dependencies installed successfully"
-    else
-        colorized_echo red "Failed to install Python dependencies"
-        colorized_echo yellow "Trying alternative method..."
-        # Try installing to user directory as fallback
-        if $PYTHON_BIN -m pip install --user --force-reinstall typing-extensions pydantic fastapi 'uvicorn[standard]' 2>&1 | tee /tmp/pip_install.log; then
-            colorized_echo green "Dependencies installed to user directory"
+    if [ -f "$NODE_SERVICE_REQUIREMENTS" ]; then
+        colorized_echo blue "Installing packages from requirements.txt..."
+        if $PYTHON_BIN -m pip install -r "$NODE_SERVICE_REQUIREMENTS" 2>&1 | grep -v "Requirement already satisfied"; then
+            colorized_echo green "Python dependencies installed successfully"
         else
-            colorized_echo red "Installation failed. Check /tmp/pip_install.log for details"
+            colorized_echo red "Failed to install from requirements.txt, trying fallback..."
+            # Remove conflicting packages
+            $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn >/dev/null 2>&1 || true
+            # Install with specific versions
+            if $PYTHON_BIN -m pip install 'typing-extensions>=4.9.0' 'pydantic>=2.6.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' 2>&1; then
+                colorized_echo green "Fallback installation successful"
+            else
+                colorized_echo red "Failed to install dependencies"
+                exit 1
+            fi
+        fi
+    else
+        colorized_echo blue "Using fallback package installation..."
+        # Remove conflicting packages
+        $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn >/dev/null 2>&1 || true
+        # Install with specific versions
+        if $PYTHON_BIN -m pip install 'typing-extensions>=4.9.0' 'pydantic>=2.6.0' 'fastapi>=0.115.0' 'uvicorn[standard]>=0.27.0' 2>&1 | grep -v "Requirement already satisfied"; then
+            colorized_echo green "Python dependencies installed successfully"
+        else
+            colorized_echo red "Failed to install dependencies"
             exit 1
         fi
     fi
