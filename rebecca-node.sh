@@ -144,7 +144,7 @@ BRANCH="master"
 IMAGE_TAG="latest"
 SCRIPT_BRANCH="master"
 DOCKER_IMAGE="rebeccapanel/rebecca-node:latest"
-SCRIPT_URL=""
+SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/rebecca-node.sh"
 if [ -f "$BRANCH_FILE" ]; then
     saved_branch=$(tr -d '[:space:]' < "$BRANCH_FILE")
     if [[ -n "$saved_branch" ]]; then
@@ -253,17 +253,28 @@ install_rebecca_node_service() {
 
     detect_os
     if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "Installing curl..."
         install_package curl
     fi
     if ! command -v python3 >/dev/null 2>&1; then
+        colorized_echo blue "Installing python3..."
         install_package python3
     fi
     if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
+        colorized_echo blue "Installing pip..."
         install_package python3-pip || true
     fi
 
+    colorized_echo blue "Creating service directory..."
     mkdir -p "$NODE_SERVICE_DIR"
-    curl -sSL "$NODE_SERVICE_SOURCE_URL" -o "$NODE_SERVICE_FILE"
+    
+    colorized_echo blue "Downloading service file..."
+    if curl -sSL "$NODE_SERVICE_SOURCE_URL" -o "$NODE_SERVICE_FILE"; then
+        colorized_echo green "Service file downloaded successfully"
+    else
+        colorized_echo red "Failed to download service file"
+        exit 1
+    fi
 
     PYTHON_BIN=$(command -v python3)
     if [ -z "$PYTHON_BIN" ]; then
@@ -271,9 +282,15 @@ install_rebecca_node_service() {
         exit 1
     fi
 
+    colorized_echo blue "Installing Python dependencies..."
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
-    $PYTHON_BIN -m pip install fastapi 'uvicorn[standard]' >/dev/null 2>&1
+    if $PYTHON_BIN -m pip install fastapi 'uvicorn[standard]' >/dev/null 2>&1; then
+        colorized_echo green "Python dependencies installed"
+    else
+        colorized_echo yellow "Warning: Some Python dependencies may not have installed correctly"
+    fi
 
+    colorized_echo blue "Creating systemd service..."
     cat > "$NODE_SERVICE_UNIT" <<EOF
 [Unit]
 Description=Rebecca-node Maintenance API
@@ -292,9 +309,20 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
+    colorized_echo blue "Enabling and starting service..."
     systemctl daemon-reload
-    systemctl enable --now rebecca-node-maint.service
-    colorized_echo green "Rebecca-node maintenance service installed and started"
+    if systemctl enable --now rebecca-node-maint.service; then
+        colorized_echo green "Rebecca-node maintenance service installed and started successfully"
+        echo ""
+        colorized_echo cyan "Service Information:"
+        colorized_echo magenta "  Service name: rebecca-node-maint.service"
+        colorized_echo magenta "  Service port: $REBECCA_NODE_SCRIPT_PORT"
+        colorized_echo magenta "  Check status: systemctl status rebecca-node-maint"
+        colorized_echo magenta "  View logs: journalctl -u rebecca-node-maint -f"
+    else
+        colorized_echo red "Failed to start service"
+        exit 1
+    fi
 }
 
 uninstall_rebecca_node_service() {
@@ -312,30 +340,20 @@ install_rebecca_node_script() {
     colorized_echo blue "Installing rebecca-node script"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
 
-    SOURCE_SCRIPT=""
-    if [[ -n "${BASH_SOURCE[0]}" && -f "${BASH_SOURCE[0]}" && -r "${BASH_SOURCE[0]}" ]]; then
-        SOURCE_SCRIPT="${BASH_SOURCE[0]}"
-    elif [[ -f "$0" && -r "$0" ]]; then
-        SOURCE_SCRIPT="$0"
-    fi
-
-    if [[ -n "$SOURCE_SCRIPT" ]]; then
-        install -m 755 "$SOURCE_SCRIPT" "$TARGET_PATH"
-    else
-        TEMP_SCRIPT=$(mktemp)
-        if ! curl -fsSL "$SCRIPT_URL" -o "$TEMP_SCRIPT"; then
-            colorized_echo red "Failed to download script from $SCRIPT_URL"
-            rm -f "$TEMP_SCRIPT"
-            exit 1
-        fi
-        if head -n 1 "$TEMP_SCRIPT" | grep -qi "<!DOCTYPE html>"; then
-            colorized_echo red "Unexpected response while downloading script (HTML received)."
-            rm -f "$TEMP_SCRIPT"
-            exit 1
-        fi
-        install -m 755 "$TEMP_SCRIPT" "$TARGET_PATH"
+    # Always download from URL to ensure latest version
+    TEMP_SCRIPT=$(mktemp)
+    if ! curl -fsSL "$SCRIPT_URL" -o "$TEMP_SCRIPT"; then
+        colorized_echo red "Failed to download script from $SCRIPT_URL"
         rm -f "$TEMP_SCRIPT"
+        exit 1
     fi
+    if head -n 1 "$TEMP_SCRIPT" | grep -qi "<!DOCTYPE html>"; then
+        colorized_echo red "Unexpected response while downloading script (HTML received)."
+        rm -f "$TEMP_SCRIPT"
+        exit 1
+    fi
+    install -m 755 "$TEMP_SCRIPT" "$TARGET_PATH"
+    rm -f "$TEMP_SCRIPT"
 
     colorized_echo green "Rebecca-node script installed successfully at $TARGET_PATH"
 }
@@ -1150,6 +1168,30 @@ edit_command() {
     fi
 }
 
+service_status_command() {
+    if [ -f "$NODE_SERVICE_UNIT" ]; then
+        colorized_echo blue "================================"
+        colorized_echo cyan "Rebecca-node Maintenance Service Status"
+        colorized_echo blue "================================"
+        systemctl status rebecca-node-maint.service --no-pager
+    else
+        colorized_echo red "Rebecca-node maintenance service is not installed"
+        colorized_echo yellow "Install it with: $APP_NAME install-service"
+        exit 1
+    fi
+}
+
+service_logs_command() {
+    if [ -f "$NODE_SERVICE_UNIT" ]; then
+        colorized_echo blue "Showing Rebecca-node maintenance service logs (Ctrl+C to exit)..."
+        journalctl -u rebecca-node-maint.service -f
+    else
+        colorized_echo red "Rebecca-node maintenance service is not installed"
+        colorized_echo yellow "Install it with: $APP_NAME install-service"
+        exit 1
+    fi
+}
+
 
 usage() {
     colorized_echo blue "================================"
@@ -1167,6 +1209,8 @@ usage() {
     colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
     colorized_echo yellow "  install         $(tput sgr0)- Install/reinstall Rebecca-node"
     colorized_echo yellow "  install-service $(tput sgr0)- Install maintenance service"
+    colorized_echo yellow "  service-status  $(tput sgr0)- Show maintenance service status"
+    colorized_echo yellow "  service-logs    $(tput sgr0)- Show maintenance service logs"
     colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
     colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Rebecca-node"
     colorized_echo yellow "  install-script  $(tput sgr0)- Install Rebecca-node script"
@@ -1198,6 +1242,21 @@ usage() {
     colorized_echo cyan "Ports:"
     colorized_echo magenta "  Service port: $SERVICE_PORT"
     colorized_echo magenta "  API port: $XRAY_API_PORT"
+    
+    # Check maintenance service status
+    if [ -f "$NODE_SERVICE_UNIT" ]; then
+        echo
+        colorized_echo cyan "Maintenance Service:"
+        if systemctl is-active --quiet rebecca-node-maint.service; then
+            colorized_echo green "  Status: Active (running)"
+        else
+            colorized_echo red "  Status: Inactive"
+        fi
+        colorized_echo magenta "  Port: $REBECCA_NODE_SCRIPT_PORT"
+        colorized_echo magenta "  Check status: $APP_NAME service-status"
+        colorized_echo magenta "  View logs: $APP_NAME service-logs"
+    fi
+    
     colorized_echo blue "================================="
     echo
 }
@@ -1241,6 +1300,12 @@ case "$COMMAND" in
     ;;
     install-service)
         install_rebecca_node_service
+    ;;
+    service-status)
+        service_status_command
+    ;;
+    service-logs)
+        service_logs_command
     ;;
     edit)
         edit_command
