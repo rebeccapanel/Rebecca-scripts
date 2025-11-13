@@ -305,21 +305,34 @@ install_rebecca_node_service() {
     fi
 
     colorized_echo blue "Installing Python dependencies..."
+    
+    # Remove conflicting packages first
+    colorized_echo blue "Cleaning up old dependencies..."
+    $PYTHON_BIN -m pip uninstall -y typing-extensions pydantic pydantic-core fastapi uvicorn >/dev/null 2>&1 || true
+    
+    # Upgrade pip
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
     
-    # Upgrade typing_extensions first to ensure compatibility
-    colorized_echo blue "Upgrading typing-extensions..."
-    $PYTHON_BIN -m pip install --upgrade typing-extensions >/dev/null 2>&1 || true
+    # Install fresh versions with --force-reinstall to ensure compatibility
+    colorized_echo blue "Installing typing-extensions..."
+    $PYTHON_BIN -m pip install --force-reinstall --no-cache-dir 'typing-extensions>=4.8.0' >/dev/null 2>&1
     
-    # Install or upgrade pydantic to ensure compatibility
     colorized_echo blue "Installing pydantic..."
-    $PYTHON_BIN -m pip install --upgrade 'pydantic>=2.0' >/dev/null 2>&1 || true
+    $PYTHON_BIN -m pip install --force-reinstall --no-cache-dir 'pydantic>=2.0' >/dev/null 2>&1
     
-    # Install fastapi and uvicorn
-    if $PYTHON_BIN -m pip install --upgrade fastapi 'uvicorn[standard]' >/dev/null 2>&1; then
+    colorized_echo blue "Installing fastapi and uvicorn..."
+    if $PYTHON_BIN -m pip install --no-cache-dir fastapi 'uvicorn[standard]' >/dev/null 2>&1; then
         colorized_echo green "Python dependencies installed successfully"
     else
-        colorized_echo yellow "Warning: Some Python dependencies may not have installed correctly"
+        colorized_echo red "Failed to install Python dependencies"
+        colorized_echo yellow "Trying alternative method..."
+        # Try installing to user directory as fallback
+        if $PYTHON_BIN -m pip install --user --force-reinstall typing-extensions pydantic fastapi 'uvicorn[standard]' 2>&1 | tee /tmp/pip_install.log; then
+            colorized_echo green "Dependencies installed to user directory"
+        else
+            colorized_echo red "Installation failed. Check /tmp/pip_install.log for details"
+            exit 1
+        fi
     fi
 
     colorized_echo blue "Creating systemd service..."
