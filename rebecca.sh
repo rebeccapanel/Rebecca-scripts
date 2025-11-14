@@ -13,8 +13,10 @@ LAST_XRAY_CORES=10
 CERTS_BASE="/var/lib/$APP_NAME/certs"
 SERVICE_DIR="/usr/local/share/rebecca-maintenance"
 SERVICE_FILE="$SERVICE_DIR/main.py"
+SERVICE_REQUIREMENTS="$SERVICE_DIR/requirements.txt"
 SERVICE_UNIT="/etc/systemd/system/rebecca-maint.service"
 SERVICE_SOURCE_URL="https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-scripts/main.py"
+SERVICE_REQUIREMENTS_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/Rebecca-scripts/maintenance_requirements.txt"
 if [ -z "$REBECCA_SCRIPT_PORT" ]; then
     REBECCA_SCRIPT_PORT="3000"
 fi
@@ -156,14 +158,64 @@ install_rebecca_service() {
     mkdir -p "$SERVICE_DIR"
     curl -sSL "$SERVICE_SOURCE_URL" -o "$SERVICE_FILE"
 
+    colorized_echo blue "Downloading maintenance requirements from $SERVICE_REQUIREMENTS_URL..."
+    if curl -sSL "$SERVICE_REQUIREMENTS_URL" -o "$SERVICE_REQUIREMENTS"; then
+        if head -n 1 "$SERVICE_REQUIREMENTS" | grep -qi "<!DOCTYPE\\|<html"; then
+            colorized_echo yellow "Failed to download requirements (HTML received); using fallback packages"
+            rm -f "$SERVICE_REQUIREMENTS"
+        else
+            colorized_echo green "Requirements file downloaded successfully"
+        fi
+    else
+        colorized_echo yellow "Unable to download requirements.txt; falling back to predefined packages"
+        rm -f "$SERVICE_REQUIREMENTS"
+    fi
+
     PYTHON_BIN=$(command -v python3)
     if [ -z "$PYTHON_BIN" ]; then
         colorized_echo red "python3 is required but was not found."
         exit 1
     fi
 
+    colorized_echo blue "Installing Python dependencies..."
+    $PYTHON_BIN -m pip install --upgrade pip --break-system-packages >/dev/null 2>&1 || \
     $PYTHON_BIN -m pip install --upgrade pip >/dev/null 2>&1 || true
-    $PYTHON_BIN -m pip install fastapi 'uvicorn[standard]' pyyaml >/dev/null 2>&1
+
+    install_fallback_packages() {
+        $PYTHON_BIN -m pip install --break-system-packages --force-reinstall --no-cache-dir \
+            'typing-extensions==4.12.2' \
+            'pydantic-core==2.27.2' \
+            'pydantic==2.10.5' \
+            'fastapi==0.115.2' \
+            'uvicorn[standard]==0.27.0.post1' \
+            'PyYAML==6.0.2' \
+            'python-multipart==0.0.9' \
+            'email-validator==2.2.0' || \
+        $PYTHON_BIN -m pip install --force-reinstall --no-cache-dir \
+            'typing-extensions==4.12.2' \
+            'pydantic-core==2.27.2' \
+            'pydantic==2.10.5' \
+            'fastapi==0.115.2' \
+            'uvicorn[standard]==0.27.0.post1' \
+            'PyYAML==6.0.2' \
+            'python-multipart==0.0.9' \
+            'email-validator==2.2.0'
+    }
+
+    if [ -f "$SERVICE_REQUIREMENTS" ]; then
+        if ! $PYTHON_BIN -m pip install -r "$SERVICE_REQUIREMENTS" --break-system-packages --force-reinstall --no-cache-dir; then
+            colorized_echo yellow "Failed to install using downloaded requirements. Falling back to pinned packages."
+            install_fallback_packages || {
+                colorized_echo red "Failed to install maintenance service dependencies."
+                exit 1
+            }
+        fi
+    else
+        install_fallback_packages || {
+            colorized_echo red "Failed to install maintenance service dependencies."
+            exit 1
+        }
+    fi
 
     cat > "$SERVICE_UNIT" <<EOF
 [Unit]

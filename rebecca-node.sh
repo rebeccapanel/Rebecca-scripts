@@ -1,6 +1,40 @@
 #!/usr/bin/env bash
 set -e
 
+APP_NAME_FROM_ARG=0
+INSTALL_DIR="/opt"
+NODE_DISCOVERY_BASE="/opt"
+
+declare -a DISCOVERED_NODE_PATHS=()
+declare -a DISCOVERED_NODE_NAMES=()
+
+set_app_context() {
+    if [ -z "$APP_NAME" ]; then
+        APP_NAME="rebecca-node"
+    fi
+
+    if [ -z "${APP_DIR:-}" ] || [ ! -d "$APP_DIR" ]; then
+        if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
+            APP_DIR="$INSTALL_DIR/$APP_NAME"
+        elif [ -d "$INSTALL_DIR/Rebecca-node" ]; then
+            APP_DIR="$INSTALL_DIR/Rebecca-node"
+        else
+            APP_DIR="$INSTALL_DIR/$APP_NAME"
+        fi
+    fi
+
+    DATA_DIR="/var/lib/$APP_NAME"
+    DATA_MAIN_DIR="/var/lib/$APP_NAME"
+    COMPOSE_FILE="$APP_DIR/docker-compose.yml"
+    BRANCH_FILE="$APP_DIR/.branch"
+    CERT_FILE="$DATA_DIR/cert.pem"
+
+    NODE_SERVICE_DIR="/usr/local/share/${APP_NAME}-maintenance"
+    NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
+    NODE_SERVICE_REQUIREMENTS="$NODE_SERVICE_DIR/requirements.txt"
+    NODE_SERVICE_UNIT="/etc/systemd/system/${APP_NAME}-maint.service"
+    NODE_SERVICE_UNIT_NAME="${APP_NAME}-maint.service"
+}
 
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -13,6 +47,7 @@ while [[ $# -gt 0 ]]; do
         --name)
             if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" || "$COMMAND" == "install-service" ]]; then
                 APP_NAME="$2"
+                APP_NAME_FROM_ARG=1
                 shift # past argument
             else
                 echo "Error: --name parameter is only allowed with 'install', 'install-script', or 'install-service' commands."
@@ -43,27 +78,8 @@ if [ -z "$APP_NAME" ]; then
     APP_NAME="${SCRIPT_NAME%.*}"
 fi
 
-INSTALL_DIR="/opt"
-
-if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
-    APP_DIR="$INSTALL_DIR/$APP_NAME"
-elif [ -d "$INSTALL_DIR/Rebecca-node" ]; then
-    APP_DIR="$INSTALL_DIR/Rebecca-node"
-else
-    APP_DIR="$INSTALL_DIR/$APP_NAME"
-fi
-
-DATA_DIR="/var/lib/$APP_NAME"
-DATA_MAIN_DIR="/var/lib/$APP_NAME"
-COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 LAST_XRAY_CORES=5
-CERT_FILE="$DATA_DIR/cert.pem"
 FETCH_REPO="rebeccapanel/Rebecca-scripts"
-BRANCH_FILE="$APP_DIR/.branch"
-NODE_SERVICE_DIR="/usr/local/share/rebecca-node-maintenance"
-NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
-NODE_SERVICE_REQUIREMENTS="$NODE_SERVICE_DIR/requirements.txt"
-NODE_SERVICE_UNIT="/etc/systemd/system/rebecca-node-maint.service"
 NODE_SERVICE_SOURCE_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/node_service.py"
 NODE_SERVICE_REQUIREMENTS_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-node/master/requirements.txt"
 if [ -z "${REBECCA_NODE_SCRIPT_PORT:-}" ]; then
@@ -99,6 +115,88 @@ colorized_echo() {
         ;;
     esac
 }
+
+extract_container_name() {
+    local compose_file="$1"
+    if [ ! -f "$compose_file" ]; then
+        return
+    fi
+    local match
+    match=$(grep -m1 "container_name" "$compose_file" 2>/dev/null | awk -F: '{gsub(/["[:space:]]/, "", $2); print $2}')
+    if [ -n "$match" ]; then
+        echo "$match"
+    fi
+}
+
+discover_node_instances() {
+    DISCOVERED_NODE_PATHS=()
+    DISCOVERED_NODE_NAMES=()
+    while IFS= read -r -d '' compose; do
+        if ! grep -qi "rebeccapanel/rebecca-node" "$compose"; then
+            continue
+        fi
+        local dir name
+        dir=$(dirname "$compose")
+        name=$(extract_container_name "$compose")
+        if [ -z "$name" ]; then
+            name=$(basename "$dir")
+        fi
+        DISCOVERED_NODE_PATHS+=("$dir")
+        DISCOVERED_NODE_NAMES+=("$name")
+    done < <(find "$NODE_DISCOVERY_BASE" -mindepth 1 -maxdepth 2 -type f -name "docker-compose.yml" -print0 2>/dev/null || true)
+}
+
+prompt_node_selection() {
+    discover_node_instances
+    local count=${#DISCOVERED_NODE_PATHS[@]}
+    if [ "$count" -eq 0 ]; then
+        colorized_echo red "No Rebecca-node installations detected under $NODE_DISCOVERY_BASE."
+        colorized_echo yellow "Specify the node with --name <node-name> or install the node first."
+        exit 1
+    fi
+    if [ "$count" -eq 1 ]; then
+        APP_NAME="${DISCOVERED_NODE_NAMES[0]}"
+        APP_DIR="${DISCOVERED_NODE_PATHS[0]}"
+        return
+    fi
+
+    colorized_echo cyan "Select the Rebecca-node instance:"
+    local idx=0
+    for dir in "${DISCOVERED_NODE_PATHS[@]}"; do
+        local display="${DISCOVERED_NODE_NAMES[$idx]}"
+        printf "  %d) %s (%s)\n" $((idx + 1)) "$display" "$dir"
+        idx=$((idx + 1))
+    done
+    local selection
+    while true; do
+        read -rp "Choice [1-$count]: " selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "$count" ]; then
+            local chosen=$((selection - 1))
+            APP_NAME="${DISCOVERED_NODE_NAMES[$chosen]}"
+            APP_DIR="${DISCOVERED_NODE_PATHS[$chosen]}"
+            break
+        fi
+        echo "Invalid choice."
+    done
+}
+
+resolve_node_service_unit_name() {
+    if [ -f "$NODE_SERVICE_UNIT" ]; then
+        echo "$NODE_SERVICE_UNIT_NAME"
+        return
+    fi
+    if [ -f "/etc/systemd/system/rebecca-node-maint.service" ]; then
+        echo "rebecca-node-maint.service"
+        return
+    fi
+    echo "$NODE_SERVICE_UNIT_NAME"
+}
+
+if [[ "$COMMAND" == "install-service" && "$APP_NAME_FROM_ARG" -eq 0 ]]; then
+    prompt_node_selection
+fi
+
+set_app_context
 
 set_branch_variables() {
     local selected_branch="${1:-master}"
@@ -273,6 +371,13 @@ install_rebecca_node_service() {
 
     colorized_echo blue "Creating service directory..."
     mkdir -p "$NODE_SERVICE_DIR"
+
+    local legacy_service="/etc/systemd/system/rebecca-node-maint.service"
+    if [ -f "$legacy_service" ] && [ "$NODE_SERVICE_UNIT_NAME" != "rebecca-node-maint.service" ]; then
+        colorized_echo yellow "Removing legacy service unit rebecca-node-maint.service"
+        systemctl disable --now rebecca-node-maint.service >/dev/null 2>&1 || true
+        rm -f "$legacy_service"
+    fi
     
     colorized_echo blue "Downloading service file from $NODE_SERVICE_SOURCE_URL..."
     if curl -sSL "$NODE_SERVICE_SOURCE_URL" -o "$NODE_SERVICE_FILE"; then
@@ -384,14 +489,14 @@ EOF
 
     colorized_echo blue "Enabling and starting service..."
     systemctl daemon-reload
-    if systemctl enable --now rebecca-node-maint.service; then
+    if systemctl enable --now "$NODE_SERVICE_UNIT_NAME"; then
         colorized_echo green "Rebecca-node maintenance service installed and started successfully"
         echo ""
         colorized_echo cyan "Service Information:"
-        colorized_echo magenta "  Service name: rebecca-node-maint.service"
+        colorized_echo magenta "  Service name: $NODE_SERVICE_UNIT_NAME"
         colorized_echo magenta "  Service port: $REBECCA_NODE_SCRIPT_PORT"
-        colorized_echo magenta "  Check status: systemctl status rebecca-node-maint"
-        colorized_echo magenta "  View logs: journalctl -u rebecca-node-maint -f"
+        colorized_echo magenta "  Check status: systemctl status $NODE_SERVICE_UNIT_NAME"
+        colorized_echo magenta "  View logs: journalctl -u $NODE_SERVICE_UNIT_NAME -f"
     else
         colorized_echo red "Failed to start service"
         exit 1
@@ -399,9 +504,19 @@ EOF
 }
 
 uninstall_rebecca_node_service() {
+    local target_unit=""
+    local target_file=""
     if [ -f "$NODE_SERVICE_UNIT" ]; then
-        systemctl disable --now rebecca-node-maint.service >/dev/null 2>&1 || true
-        rm -f "$NODE_SERVICE_UNIT"
+        target_unit="$NODE_SERVICE_UNIT_NAME"
+        target_file="$NODE_SERVICE_UNIT"
+    elif [ -f "/etc/systemd/system/rebecca-node-maint.service" ]; then
+        target_unit="rebecca-node-maint.service"
+        target_file="/etc/systemd/system/rebecca-node-maint.service"
+    fi
+
+    if [ -n "$target_unit" ]; then
+        systemctl disable --now "$target_unit" >/dev/null 2>&1 || true
+        rm -f "$target_file"
         systemctl daemon-reload
     fi
     if [ -d "$NODE_SERVICE_DIR" ]; then
@@ -1242,27 +1357,50 @@ edit_command() {
 }
 
 service_status_command() {
-    if [ -f "$NODE_SERVICE_UNIT" ]; then
-        colorized_echo blue "================================"
-        colorized_echo cyan "Rebecca-node Maintenance Service Status"
-        colorized_echo blue "================================"
-        systemctl status rebecca-node-maint.service --no-pager
-    else
+    local unit_file="$NODE_SERVICE_UNIT"
+    local fallback_file="/etc/systemd/system/rebecca-node-maint.service"
+    local target_unit
+    target_unit=$(resolve_node_service_unit_name)
+
+    if [ "$target_unit" = "$NODE_SERVICE_UNIT_NAME" ] && [ ! -f "$unit_file" ]; then
+        target_unit=""
+    fi
+    if [ -z "$target_unit" ] && [ -f "$fallback_file" ]; then
+        target_unit="rebecca-node-maint.service"
+    fi
+
+    if [ -z "$target_unit" ]; then
         colorized_echo red "Rebecca-node maintenance service is not installed"
         colorized_echo yellow "Install it with: $APP_NAME install-service"
         exit 1
     fi
+
+    colorized_echo blue "================================"
+    colorized_echo cyan "Rebecca-node Maintenance Service Status"
+    colorized_echo blue "================================"
+    systemctl status "$target_unit" --no-pager
 }
 
 service_logs_command() {
-    if [ -f "$NODE_SERVICE_UNIT" ]; then
-        colorized_echo blue "Showing Rebecca-node maintenance service logs (Ctrl+C to exit)..."
-        journalctl -u rebecca-node-maint.service -f
-    else
+    local unit
+    unit=$(resolve_node_service_unit_name)
+    local unit_file="$NODE_SERVICE_UNIT"
+    local fallback_file="/etc/systemd/system/rebecca-node-maint.service"
+    if [ "$unit" = "$NODE_SERVICE_UNIT_NAME" ] && [ ! -f "$unit_file" ]; then
+        unit=""
+    fi
+    if [ -z "$unit" ] && [ -f "$fallback_file" ]; then
+        unit="rebecca-node-maint.service"
+    fi
+
+    if [ -z "$unit" ]; then
         colorized_echo red "Rebecca-node maintenance service is not installed"
         colorized_echo yellow "Install it with: $APP_NAME install-service"
         exit 1
     fi
+
+    colorized_echo blue "Showing Rebecca-node maintenance service logs (Ctrl+C to exit)..."
+    journalctl -u "$unit" -f
 }
 
 
@@ -1318,14 +1456,22 @@ usage() {
     colorized_echo magenta "  API port: $XRAY_API_PORT"
     
     # Check maintenance service status
+    local summary_unit=""
     if [ -f "$NODE_SERVICE_UNIT" ]; then
+        summary_unit="$NODE_SERVICE_UNIT_NAME"
+    elif [ -f "/etc/systemd/system/rebecca-node-maint.service" ]; then
+        summary_unit="rebecca-node-maint.service"
+    fi
+
+    if [ -n "$summary_unit" ]; then
         echo
         colorized_echo cyan "Maintenance Service:"
-        if systemctl is-active --quiet rebecca-node-maint.service; then
+        if systemctl is-active --quiet "$summary_unit"; then
             colorized_echo green "  Status: Active (running)"
         else
             colorized_echo red "  Status: Inactive"
         fi
+        colorized_echo magenta "  Service: $summary_unit"
         colorized_echo magenta "  Port: $REBECCA_NODE_SCRIPT_PORT"
         colorized_echo magenta "  Check status: $APP_NAME service-status"
         colorized_echo magenta "  View logs: $APP_NAME service-logs"
