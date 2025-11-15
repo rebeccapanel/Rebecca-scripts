@@ -66,17 +66,23 @@ safe_move_directory() {
 
 update_file_references() {
     local file="$1"
-    if [ -f "$file" ]; then
-        sed -i \
-            -e 's#/var/lib/marzban#/var/lib/rebecca#g' \
-            -e 's#/opt/marzban#/opt/rebecca#g' \
-            -e 's/Marzban/Rebecca/g' \
-            -e 's/marzban/rebecca/g' \
-            "$file"
-        log "Updated references inside $file"
-    else
+    if [ ! -f "$file" ]; then
         warn "$file not found. Skipping."
+        return
     fi
+
+    if [[ "$file" == *.env ]]; then
+        warn "Skipping replacements inside $file to preserve database configuration."
+        return
+    fi
+
+    sed -i \
+        -e 's#/var/lib/marzban#/var/lib/rebecca#g' \
+        -e 's#/opt/marzban#/opt/rebecca#g' \
+        -e 's/Marzban/Rebecca/g' \
+        -e 's/marzban/rebecca/g' \
+        "$file"
+    log "Updated references inside $file"
 }
 
 migrate_systemd_service() {
