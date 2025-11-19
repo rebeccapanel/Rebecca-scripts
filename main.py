@@ -41,7 +41,7 @@ from typing import Dict, Iterable, List, Optional
 import pymysql
 import uvicorn
 import yaml
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -397,8 +397,14 @@ def safe_extract_tar(archive: Path, destination: Path) -> None:
 
 
 def extract_backup_archive(archive: Path, destination: Path) -> None:
+    """Extract backup archive (zip or tar.gz) to destination."""
+    archive_name = archive.name.lower()
     suffix = archive.suffix.lower()
-    if suffix == ".zip":
+    
+    # Check if it's a .tar.gz file (has .gz suffix but actually .tar.gz)
+    is_tar_gz = archive_name.endswith(".tar.gz") or archive_name.endswith(".tgz")
+    
+    if suffix == ".zip" and not is_tar_gz:
         with zipfile.ZipFile(archive) as archive_file:
             for member in archive_file.namelist():
                 member_path = Path(destination, member)
@@ -407,6 +413,7 @@ def extract_backup_archive(archive: Path, destination: Path) -> None:
                     raise HTTPException(status_code=400, detail="Unsafe archive detected")
             archive_file.extractall(destination)
     else:
+        # Handle .tar.gz, .tgz, or other tar formats
         safe_extract_tar(archive, destination)
 
 
@@ -496,24 +503,51 @@ def dump_mysql_databases(root: Path, env_values: Dict[str, str]) -> None:
         )
 
 
-def create_backup_archive() -> Path:
+def create_backup_archive(format: str = "zip") -> Path:
+    """
+    Create a backup archive containing all necessary files.
+    
+    Args:
+        format: Archive format - "zip" or "tar.gz"
+    
+    Returns:
+        Path to the created archive file
+    """
+    if format not in ("zip", "tar.gz"):
+        raise ValueError(f"Unsupported archive format: {format}. Use 'zip' or 'tar.gz'")
+    
     env_values = load_env_file(settings.env_file)
+    
+    # Create backup directory if it doesn't exist
+    settings.backup_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate backup filename with timestamp
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    extension = ".zip" if format == "zip" else ".tar.gz"
+    backup_filename = f"rebecca_backup_{timestamp}{extension}"
+    archive_path = settings.backup_dir / backup_filename
+    
     with tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir) / "payload"
         root.mkdir(parents=True, exist_ok=True)
 
+        # Copy configuration files
         if settings.env_file.exists():
             shutil.copy2(settings.env_file, root / ".env")
         if settings.compose_file.exists():
             shutil.copy2(settings.compose_file, root / "docker-compose.yml")
 
+        # Copy data directory (excluding mysql)
         copy_directory(
             settings.data_dir,
             root / "rebecca_data",
             excluded=[settings.data_dir / "mysql"],
         )
+        
+        # Copy app directory
         copy_directory(settings.app_dir, root / "rebecca_app")
 
+        # Dump MySQL/MariaDB databases
         try:
             dump_mysql_databases(root, env_values)
         except HTTPException:
@@ -521,6 +555,7 @@ def create_backup_archive() -> Path:
         except Exception as exc:
             logger.exception("Failed to dump MySQL databases: %s", exc)
 
+        # Fallback to SQLite if MySQL dump doesn't exist
         if not (root / "db_backup.sql").exists():
             try:
                 sqlite_path = resolve_sqlite_path(env_values)
@@ -529,12 +564,19 @@ def create_backup_archive() -> Path:
             if sqlite_path and sqlite_path.exists():
                 shutil.copy2(sqlite_path, root / "db_backup.sqlite")
 
-        fd, temp_zip = tempfile.mkdtemp(prefix="rebecca_backup_")
-        archive_path = Path(temp_zip) / "backup.zip"
-        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in root.rglob("*"):
-                archive.write(path, path.relative_to(root))
+        # Create archive in backup_dir (not in temp_dir so it persists)
+        if format == "zip":
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in root.rglob("*"):
+                    if path.is_file():
+                        archive.write(path, path.relative_to(root))
+        else:  # tar.gz
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for path in root.rglob("*"):
+                    if path.is_file():
+                        archive.add(path, arcname=path.relative_to(root))
 
+    logger.info(f"Backup archive created: {archive_path}")
     return archive_path
 
 
@@ -732,13 +774,38 @@ async def restart_panel():
 
 
 @app.post("/backup/export")
-async def export_backup(background_tasks: BackgroundTasks):
-    archive_path = await asyncio.to_thread(create_backup_archive)
+async def export_backup(background_tasks: BackgroundTasks, format: str = Query("zip", description="Archive format: 'zip' or 'tar.gz'")):
+    """
+    Export backup archive.
+    
+    Query Parameters:
+        format: Archive format - "zip" (default) or "tar.gz"
+    """
+    format_lower = format.lower().strip()
+    if format_lower not in ("zip", "tar.gz", "tar"):
+        raise HTTPException(status_code=400, detail="Format must be 'zip' or 'tar.gz'")
+    
+    # Normalize tar -> tar.gz
+    if format_lower == "tar":
+        format_lower = "tar.gz"
+    
+    try:
+        archive_path = await asyncio.to_thread(create_backup_archive, format_lower)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    
+    # Determine media type based on format
+    media_type = "application/zip" if format_lower == "zip" else "application/gzip"
+    
+    # Send to Telegram in background (don't wait for it)
     background_tasks.add_task(send_backup_to_telegram, archive_path)
-    background_tasks.add_task(cleanup_file, archive_path)
+    
+    # Note: Archive is saved in backup_dir and will persist until manually deleted
+    # For automatic cleanup, implement a cleanup task that removes old backups
+    
     return FileResponse(
         archive_path,
-        media_type="application/zip",
+        media_type=media_type,
         filename=archive_path.name,
         background=background_tasks,
     )
