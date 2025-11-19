@@ -104,15 +104,14 @@ update_file_references() {
     fi
 
     if [[ "$file" == *.env ]]; then
-        warn "Skipping replacements inside $file to preserve database configuration. Update the addresses manually."
+        warn "Skipping replacements inside $file to preserve database configuration. Update the addresses manually if needed."
         return
     fi
 
     replace_text_in_file "$file" \
         "/var/lib/marzban" "/var/lib/rebecca" \
         "/opt/marzban" "/opt/rebecca" \
-        "Marzban" "Rebecca" \
-        "marzban" "rebecca"
+        "Marzban" "Rebecca"
 }
 
 migrate_systemd_service() {
@@ -122,8 +121,7 @@ migrate_systemd_service() {
         replace_text_in_file "$service_path" \
             "/var/lib/marzban" "/var/lib/rebecca" \
             "/opt/marzban" "/opt/rebecca" \
-            "Marzban" "Rebecca" \
-            "marzban" "rebecca"
+            "Marzban" "Rebecca"
         mv "$service_path" "/etc/systemd/system/${NEW_SERVICE_NAME}.service"
         systemctl daemon-reload
         systemctl enable --now "${NEW_SERVICE_NAME}.service"
@@ -157,141 +155,6 @@ install_rebecca_service_unit() {
     fi
 }
 
-get_env_value() {
-    local file="$1"
-    local key="$2"
-    if [ ! -f "$file" ]; then
-        return
-    fi
-    local line
-    line=$(grep -E "^${key}=" "$file" | tail -n 1 || true)
-    if [ -z "$line" ]; then
-        return
-    fi
-    local value
-    value=${line#*=}
-    value=${value%%#*}
-    value=$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    value=${value%\"}
-    value=${value#\"}
-    value=${value%\'}
-    value=${value#\'}
-    printf "%s" "$value"
-}
-
-detect_database_service() {
-    local compose_file="$1"
-    if [ ! -f "$compose_file" ]; then
-        return
-    fi
-    local current_service=""
-    local in_services=0
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^services: ]]; then
-            in_services=1
-            continue
-        fi
-        if [ $in_services -eq 0 ]; then
-            continue
-        fi
-        if [[ "$line" =~ ^[[:space:]]{2}([A-Za-z0-9._-]+):[[:space:]]*$ ]]; then
-            current_service="${BASH_REMATCH[1]}"
-            continue
-        fi
-        if [[ "$line" =~ ^[[:space:]]+image:[[:space:]]*(.+)$ ]]; then
-            local image="${BASH_REMATCH[1]}"
-            image=${image//\"/}
-            image=${image//\'/}
-            image=$(printf '%s' "$image" | xargs)
-            local lower=${image,,}
-            if [[ "$lower" == *"mariadb"* || "$lower" == *"mysql"* ]]; then
-                printf "%s" "$current_service"
-                return
-            fi
-        fi
-    done < "$compose_file"
-}
-
-rename_database_if_needed() {
-    local compose_bin="$1"
-    local compose_file="$OLD_APP_DIR/docker-compose.yml"
-    local env_file="$OLD_APP_DIR/.env"
-    if [ ! -f "$compose_file" ] || [ ! -f "$env_file" ]; then
-        return
-    fi
-
-    local current_db
-    current_db=$(get_env_value "$env_file" "MARIADB_DATABASE")
-    if [ -z "$current_db" ]; then
-        current_db=$(get_env_value "$env_file" "MYSQL_DATABASE")
-    fi
-    if [ -z "$current_db" ]; then
-        warn "Database name not found inside $env_file; skipping database rename."
-        return
-    fi
-
-    local target_db="$NEW_SERVICE_NAME"
-    if [ "$current_db" = "$target_db" ]; then
-        log "Database already named '$target_db'; skipping rename."
-        return
-    fi
-
-    local root_pass
-    root_pass=$(get_env_value "$env_file" "MARIADB_ROOT_PASSWORD")
-    if [ -z "$root_pass" ]; then
-        root_pass=$(get_env_value "$env_file" "MYSQL_ROOT_PASSWORD")
-    fi
-    if [ -z "$root_pass" ]; then
-        warn "Root database password not found in $env_file; skipping database rename."
-        return
-    fi
-
-    local db_service
-    db_service=$(detect_database_service "$compose_file")
-    if [ -z "$db_service" ]; then
-        warn "Unable to detect database service in docker-compose.yml; skipping database rename."
-        return
-    fi
-
-    local temp_dump
-    temp_dump=$(mktemp)
-    trap 'rm -f "$temp_dump"' RETURN
-
-    log "Exporting database '$current_db' from service '$db_service'"
-    if ! $compose_bin -f "$compose_file" exec -T -e MYSQL_PWD="$root_pass" "$db_service" mysqldump -u root "$current_db" >"$temp_dump"; then
-        trap - RETURN
-        rm -f "$temp_dump"
-        error_exit "Failed to export database '$current_db'."
-    fi
-
-    printf -v create_sql 'CREATE DATABASE IF NOT EXISTS `%s`;' "$target_db"
-    log "Creating target database '$target_db'"
-    if ! $compose_bin -f "$compose_file" exec -T -e MYSQL_PWD="$root_pass" "$db_service" mysql -u root -e "$create_sql"; then
-        trap - RETURN
-        rm -f "$temp_dump"
-        error_exit "Failed to create database '$target_db'."
-    fi
-
-    log "Importing data into '$target_db'"
-    if ! cat "$temp_dump" | $compose_bin -f "$compose_file" exec -T -e MYSQL_PWD="$root_pass" "$db_service" mysql -u root "$target_db"; then
-        trap - RETURN
-        rm -f "$temp_dump"
-        error_exit "Failed to import data into '$target_db'."
-    fi
-
-    printf -v drop_sql 'DROP DATABASE `%s`;' "$current_db"
-    log "Dropping legacy database '$current_db'"
-    if ! $compose_bin -f "$compose_file" exec -T -e MYSQL_PWD="$root_pass" "$db_service" mysql -u root -e "$drop_sql"; then
-        trap - RETURN
-        rm -f "$temp_dump"
-        error_exit "Failed to drop old database '$current_db'."
-    fi
-
-    trap - RETURN
-    rm -f "$temp_dump"
-    log "Database renamed from '$current_db' to '$target_db'."
-}
-
 rerun_install_service_script() {
     local script_path="$NEW_APP_DIR/install_service.sh"
     if [ ! -f "$script_path" ]; then
@@ -306,14 +169,31 @@ rerun_install_service_script() {
 }
 
 restart_rebecca_panel() {
-    if ! command -v rebecca >/dev/null 2>&1; then
-        warn "Rebecca CLI not available; please restart the services manually."
+    local compose_bin="$1"
+
+    if command -v rebecca >/dev/null 2>&1; then
+        if rebecca restart >/dev/null 2>&1; then
+            log "Rebecca has been restarted successfully via rebecca CLI."
+            return
+        else
+            warn "Rebecca CLI restart failed; falling back to docker compose."
+        fi
+    else
+        warn "Rebecca CLI not available; using docker compose to restart."
+    fi
+
+    local compose_file="$NEW_APP_DIR/docker-compose.yml"
+    if [ ! -f "$compose_file" ]; then
+        warn "Cannot find $compose_file to restart Rebecca via docker compose."
         return
     fi
-    if rebecca restart >/dev/null 2>&1; then
-        log "Rebecca has been restarted successfully."
+
+    log "Restarting Rebecca stack using docker compose..."
+    $compose_bin -f "$compose_file" -p "$NEW_SERVICE_NAME" down >/dev/null 2>&1 || true
+    if $compose_bin -f "$compose_file" -p "$NEW_SERVICE_NAME" up -d --remove-orphans; then
+        log "Rebecca stack restarted successfully via docker compose."
     else
-        warn "Rebecca restart failed; please restart manually."
+        warn "Docker compose restart failed; please check the stack manually."
     fi
 }
 
@@ -322,7 +202,6 @@ main() {
     local compose_bin
     compose_bin=$(compose_binary)
 
-    rename_database_if_needed "$compose_bin"
 
     if [ -f "$OLD_APP_DIR/docker-compose.yml" ]; then
         log "Stopping existing Marzban stack"
@@ -340,7 +219,7 @@ main() {
     install_rebecca_service_unit
     rerun_install_service_script
 
-    restart_rebecca_panel
+    restart_rebecca_panel "$compose_bin"
 
     log "Migration complete. You can now manage the panel using the 'rebecca' command."
     log "For example: rebecca up"
