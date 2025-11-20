@@ -45,7 +45,7 @@ except ImportError:
 
 import uvicorn
 import yaml
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -750,24 +750,57 @@ def send_backup_to_telegram(path: Path) -> None:
     enabled = env_values.get("BACKUP_SERVICE_ENABLED", "").lower() == "true"
     bot_key = env_values.get("BACKUP_TELEGRAM_BOT_KEY")
     chat_id = env_values.get("BACKUP_TELEGRAM_CHAT_ID")
+    topic_id = env_values.get("BACKUP_TELEGRAM_TOPIC_ID")
     if not enabled or not bot_key or not chat_id:
         return
     caption = f"Rebecca backup {path.name} at {datetime.utcnow().isoformat()} UTC"
     try:
-        run_subprocess(
-            [
-                "curl",
-                "-s",
-                "-F",
-                f"chat_id={chat_id}",
-                "-F",
-                f"document=@{str(path)}",
-                "-F",
-                f"caption={caption}",
-                f"https://api.telegram.org/bot{bot_key}/sendDocument",
-            ],
-            check=False,
-        )
+        cmd = [
+            "curl",
+            "-s",
+            "-F",
+            f"chat_id={chat_id}",
+            "-F",
+            f"document=@{str(path)}",
+            "-F",
+            f"caption={caption}",
+        ]
+        if topic_id:
+            cmd.extend(["-F", f"message_thread_id={topic_id}"])
+        cmd.append(f"https://api.telegram.org/bot{bot_key}/sendDocument")
+        run_subprocess(cmd, check=False)
+    except Exception as exc:
+        logger.error("Failed to send backup to Telegram: %s", exc)
+
+
+def send_backup_to_telegram_with_config(
+    path: Path,
+    bot_key: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+) -> None:
+    """Send backup to Telegram with provided config."""
+    if not bot_key or not chat_id:
+        logger.warning("Telegram config not provided, skipping backup send")
+        return
+    
+    caption = f"Rebecca backup {path.name} at {datetime.utcnow().isoformat()} UTC"
+    try:
+        cmd = [
+            "curl",
+            "-s",
+            "-F",
+            f"chat_id={chat_id}",
+            "-F",
+            f"document=@{str(path)}",
+            "-F",
+            f"caption={caption}",
+        ]
+        if topic_id:
+            cmd.extend(["-F", f"message_thread_id={topic_id}"])
+        cmd.append(f"https://api.telegram.org/bot{bot_key}/sendDocument")
+        run_subprocess(cmd, check=False)
+        logger.info(f"Backup sent to Telegram: {path.name}")
     except Exception as exc:
         logger.error("Failed to send backup to Telegram: %s", exc)
 
@@ -929,6 +962,61 @@ async def update_xray_core(payload: Optional[XrayUpdateRequest] = None):
 async def update_xray_geodata(payload: GeoUpdateRequest):
     saved = await asyncio.to_thread(download_geo_files, payload.files)
     return {"status": "ok", "files": saved}
+
+
+@app.post("/backup/export-with-telegram")
+async def export_backup_with_telegram(
+    background_tasks: BackgroundTasks,
+    telegram_config: dict = Body(...),
+    format: str = Query("zip", description="Archive format: 'zip' or 'tar.gz'"),
+):
+    """
+    Export backup archive and send to Telegram.
+    
+    Body Parameters:
+        telegram_config: Dict with keys: bot_key (str), chat_id (str), topic_id (int, optional)
+    
+    Query Parameters:
+        format: Archive format - "zip" (default) or "tar.gz"
+    """
+    format_lower = format.lower().strip()
+    if format_lower not in ("zip", "tar.gz", "tar"):
+        raise HTTPException(status_code=400, detail="Format must be 'zip' or 'tar.gz'")
+    
+    # Normalize tar -> tar.gz
+    if format_lower == "tar":
+        format_lower = "tar.gz"
+    
+    try:
+        archive_path = await asyncio.to_thread(create_backup_archive, format_lower)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    
+    # Send to Telegram in background with provided config
+    bot_key = telegram_config.get("bot_key")
+    chat_id = telegram_config.get("chat_id")
+    topic_id = telegram_config.get("topic_id")
+    
+    background_tasks.add_task(
+        send_backup_to_telegram_with_config,
+        archive_path,
+        bot_key,
+        chat_id,
+        str(topic_id) if topic_id else None,
+    )
+    
+    # Determine media type based on format
+    media_type = "application/zip" if format_lower == "zip" else "application/gzip"
+    
+    return FileResponse(
+        path=str(archive_path),
+        media_type=media_type,
+        filename=archive_path.name,
+        headers={
+            "Content-Disposition": f'attachment; filename="{archive_path.name}"',
+        },
+        background=background_tasks,
+    )
 
 
 @app.post("/service/update")
