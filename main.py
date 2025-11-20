@@ -34,7 +34,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -127,6 +127,9 @@ class Settings:
 settings = Settings()
 app = FastAPI(title="Rebecca Maintenance API", version="0.1.0")
 DOMAIN_PATTERN = re.compile(r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+
+BACKUP_MAX_FILES = int(os.getenv("REBECCA_BACKUP_MAX_FILES", "20"))
+BACKUP_RETENTION_DAYS = int(os.getenv("REBECCA_BACKUP_RETENTION_DAYS", "14"))
 
 MYSQL_DEFAULT_DATABASES = {
     "information_schema",
@@ -628,7 +631,31 @@ def create_backup_archive(format: str = "zip") -> Path:
                         archive.add(path, arcname=path.relative_to(root))
 
     logger.info(f"Backup archive created: {archive_path}")
+    _cleanup_old_backups()
     return archive_path
+
+
+def _cleanup_old_backups() -> None:
+    if not settings.backup_dir.exists():
+        return
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=BACKUP_RETENTION_DAYS)
+    candidates = sorted(
+        settings.backup_dir.glob("rebecca_backup_*"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for index, path in enumerate(candidates):
+        try:
+            file_time = datetime.utcfromtimestamp(path.stat().st_mtime)
+        except Exception:
+            file_time = now
+        if index >= BACKUP_MAX_FILES or file_time < cutoff:
+            try:
+                path.unlink(missing_ok=True)
+                logger.info("Removed old backup archive: %s", path.name)
+            except Exception as exc:
+                logger.warning("Failed to remove old backup '%s': %s", path, exc)
 
 
 def cleanup_file(path: Path) -> None:
