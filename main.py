@@ -77,7 +77,6 @@ class Settings:
         self.compose_file = Path(
             os.getenv("REBECCA_COMPOSE_FILE", self.app_dir / "docker-compose.yml")
         )
-        self.backup_dir = Path(os.getenv("REBECCA_BACKUP_DIR", self.app_dir / "backup"))
         self.compose_project = os.getenv("REBECCA_COMPOSE_PROJECT", self.app_name)
         self.service_name = os.getenv("REBECCA_SERVICE_NAME", self.app_name)
 
@@ -127,9 +126,6 @@ class Settings:
 settings = Settings()
 app = FastAPI(title="Rebecca Maintenance API", version="0.1.0")
 DOMAIN_PATTERN = re.compile(r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
-
-BACKUP_MAX_FILES = int(os.getenv("REBECCA_BACKUP_MAX_FILES", "20"))
-BACKUP_RETENTION_DAYS = int(os.getenv("REBECCA_BACKUP_RETENTION_DAYS", "14"))
 
 MYSQL_DEFAULT_DATABASES = {
     "information_schema",
@@ -403,27 +399,6 @@ def safe_extract_tar(archive: Path, destination: Path) -> None:
         tar.extractall(destination)
 
 
-def extract_backup_archive(archive: Path, destination: Path) -> None:
-    """Extract backup archive (zip or tar.gz) to destination."""
-    archive_name = archive.name.lower()
-    suffix = archive.suffix.lower()
-    
-    # Check if it's a .tar.gz file (has .gz suffix but actually .tar.gz)
-    is_tar_gz = archive_name.endswith(".tar.gz") or archive_name.endswith(".tgz")
-    
-    if suffix == ".zip" and not is_tar_gz:
-        with zipfile.ZipFile(archive) as archive_file:
-            for member in archive_file.namelist():
-                member_path = Path(destination, member)
-                resolved = member_path.resolve()
-                if not str(resolved).startswith(str(destination.resolve())):
-                    raise HTTPException(status_code=400, detail="Unsafe archive detected")
-            archive_file.extractall(destination)
-    else:
-        # Handle .tar.gz, .tgz, or other tar formats
-        safe_extract_tar(archive, destination)
-
-
 def copy_directory(source: Path, destination: Path, excluded: Optional[List[Path]] = None) -> None:
     if not source.exists():
         return
@@ -470,7 +445,6 @@ def mysql_database_names(service: str, password: str) -> List[str]:
     return [name for name in names if name not in MYSQL_DEFAULT_DATABASES]
 
 
-def dump_mysql_databases(root: Path, env_values: Dict[str, str]) -> None:
     """
     Dump MySQL/MariaDB databases to SQL file.
     This function is safe to fail - backup will fall back to SQLite if needed.
@@ -578,36 +552,41 @@ def create_backup_archive(format: str = "zip") -> Path:
         root = Path(temp_dir) / "payload"
         root.mkdir(parents=True, exist_ok=True)
 
-        # Copy configuration files
-        if settings.env_file.exists():
-            shutil.copy2(settings.env_file, root / ".env")
-        if settings.compose_file.exists():
-            shutil.copy2(settings.compose_file, root / "docker-compose.yml")
+        include_paths = settings.backup_includes
+        if include_paths:
+            for entry in include_paths:
+                _copy_custom_backup_path(root, entry)
+        else:
+            # Copy configuration files
+            if settings.env_file.exists():
+                shutil.copy2(settings.env_file, root / ".env")
+            if settings.compose_file.exists():
+                shutil.copy2(settings.compose_file, root / "docker-compose.yml")
 
-        # Copy data directory (excluding mysql)
-        copy_directory(
-            settings.data_dir,
-            root / "rebecca_data",
-            excluded=[settings.data_dir / "mysql"],
-        )
-        
-        # Copy app directory
-        copy_directory(settings.app_dir, root / "rebecca_app")
+            # Copy data directory (excluding mysql)
+            copy_directory(
+                settings.data_dir,
+                root / "rebecca_data",
+                excluded=[settings.data_dir / "mysql"],
+            )
+            
+            # Copy app directory
+            copy_directory(settings.app_dir, root / "rebecca_app")
 
-        # Dump MySQL/MariaDB databases
-        try:
-            dump_mysql_databases(root, env_values)
-        except HTTPException:
-            # Re-raise HTTP exceptions (user-facing errors)
-            raise
-        except RuntimeError as exc:
-            # RuntimeError from compose_command or other runtime issues
-            logger.exception("Failed to dump MySQL databases (runtime error): %s", exc)
-            # Continue without MySQL dump - SQLite fallback will handle it
-        except Exception as exc:
-            # Catch any other exceptions and log them
-            logger.exception("Failed to dump MySQL databases: %s", exc)
-            # Continue without MySQL dump - SQLite fallback will handle it
+            # Dump MySQL/MariaDB databases
+            try:
+                dump_mysql_databases(root, env_values)
+            except HTTPException:
+                # Re-raise HTTP exceptions (user-facing errors)
+                raise
+            except RuntimeError as exc:
+                # RuntimeError from compose_command or other runtime issues
+                logger.exception("Failed to dump MySQL databases (runtime error): %s", exc)
+                # Continue without MySQL dump - SQLite fallback will handle it
+            except Exception as exc:
+                # Catch any other exceptions and log them
+                logger.exception("Failed to dump MySQL databases: %s", exc)
+                # Continue without MySQL dump - SQLite fallback will handle it
 
         # Fallback to SQLite if MySQL dump doesn't exist
         if not (root / "db_backup.sql").exists():
@@ -770,6 +749,17 @@ def restore_backup_archive(archive_path: Path) -> None:
             restore_sqlite_backup(sqlite_dump, env_values)
 
         start_stack()
+
+        custom_root = extracted / "custom"
+        if custom_root.exists():
+            for item in sorted(custom_root.rglob("*")):
+                relative_path = item.relative_to(custom_root)
+                target_path = Path("/") / relative_path
+                if item.is_dir():
+                    target_path.mkdir(parents=True, exist_ok=True)
+                else:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, target_path)
 
 
 def send_backup_to_telegram(path: Path) -> None:
