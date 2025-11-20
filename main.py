@@ -38,7 +38,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-import pymysql
+try:
+    import pymysql
+except ImportError:
+    pymysql = None  # pymysql is optional, only needed for MySQL/MariaDB
+
 import uvicorn
 import yaml
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -438,6 +442,11 @@ def copy_directory(source: Path, destination: Path, excluded: Optional[List[Path
 
 
 def mysql_database_names(service: str, password: str) -> List[str]:
+    if pymysql is None:
+        raise HTTPException(
+            status_code=500,
+            detail="pymysql is not installed. Install it with: pip install pymysql"
+        )
     try:
         conn = pymysql.connect(
             host="127.0.0.1",
@@ -459,48 +468,83 @@ def mysql_database_names(service: str, password: str) -> List[str]:
 
 
 def dump_mysql_databases(root: Path, env_values: Dict[str, str]) -> None:
+    """
+    Dump MySQL/MariaDB databases to SQL file.
+    This function is safe to fail - backup will fall back to SQLite if needed.
+    """
     if not settings.compose_file.exists():
+        logger.info("docker-compose.yml not found, skipping MySQL dump")
         return
 
-    compose_text = settings.compose_file.read_text()
+    try:
+        compose_text = settings.compose_file.read_text()
+    except Exception as exc:
+        logger.warning("Failed to read docker-compose.yml: %s", exc)
+        return
+
     service = detect_db_service(compose_text)
     if not service:
+        logger.info("No MySQL/MariaDB service detected in docker-compose.yml")
         return
 
     password = env_values.get("MYSQL_ROOT_PASSWORD")
     if not password:
-        raise HTTPException(status_code=400, detail="MYSQL_ROOT_PASSWORD missing in .env")
+        logger.warning("MYSQL_ROOT_PASSWORD missing in .env, skipping MySQL dump")
+        return
 
-    compose_command("up", "-d", service)
-    time.sleep(5)
-    databases = mysql_database_names(service, password)
+    try:
+        compose_command("up", "-d", service)
+        time.sleep(5)
+    except RuntimeError as exc:
+        logger.warning("Failed to start MySQL service: %s", exc)
+        return
+
+    try:
+        databases = mysql_database_names(service, password)
+    except HTTPException as exc:
+        # pymysql not installed or connection failed
+        logger.warning("Failed to connect to MySQL: %s", exc.detail)
+        return
+    except Exception as exc:
+        logger.warning("Failed to list MySQL databases: %s", exc)
+        return
+
     if not databases:
+        logger.info("No MySQL databases found to dump")
         return
 
     dump_file = root / "db_backup.sql"
-    cmd = settings.compose_cmd(
-        "exec",
-        "-T",
-        service,
-        "mysqldump",
-        "-u",
-        "root",
-        f"-p{password}",
-        "--events",
-        "--triggers",
-        "--routines",
-        "--single-transaction",
-        "--quick",
-        "--databases",
-        *databases,
-    )
-    with dump_file.open("wb") as handle:
-        proc = subprocess.run(cmd, stdout=handle, stderr=subprocess.PIPE)
-    if proc.returncode != 0:
-        raise HTTPException(
-            status_code=500,
-            detail=f"mysqldump failed: {proc.stderr.decode(errors='ignore')}",
+    try:
+        cmd = settings.compose_cmd(
+            "exec",
+            "-T",
+            service,
+            "mysqldump",
+            "-u",
+            "root",
+            f"-p{password}",
+            "--events",
+            "--triggers",
+            "--routines",
+            "--single-transaction",
+            "--quick",
+            "--databases",
+            *databases,
         )
+        with dump_file.open("wb") as handle:
+            proc = subprocess.run(cmd, stdout=handle, stderr=subprocess.PIPE, timeout=300)
+        if proc.returncode != 0:
+            error_msg = proc.stderr.decode(errors='ignore')
+            logger.warning("mysqldump failed (exit code %d): %s", proc.returncode, error_msg)
+            # Don't raise - fallback to SQLite will handle it
+            return
+        logger.info("MySQL dump completed successfully: %d databases", len(databases))
+    except subprocess.TimeoutExpired:
+        logger.warning("mysqldump timed out after 300 seconds")
+        return
+    except Exception as exc:
+        logger.warning("Failed to run mysqldump: %s", exc)
+        return
 
 
 def create_backup_archive(format: str = "zip") -> Path:
@@ -551,9 +595,16 @@ def create_backup_archive(format: str = "zip") -> Path:
         try:
             dump_mysql_databases(root, env_values)
         except HTTPException:
+            # Re-raise HTTP exceptions (user-facing errors)
             raise
+        except RuntimeError as exc:
+            # RuntimeError from compose_command or other runtime issues
+            logger.exception("Failed to dump MySQL databases (runtime error): %s", exc)
+            # Continue without MySQL dump - SQLite fallback will handle it
         except Exception as exc:
+            # Catch any other exceptions and log them
             logger.exception("Failed to dump MySQL databases: %s", exc)
+            # Continue without MySQL dump - SQLite fallback will handle it
 
         # Fallback to SQLite if MySQL dump doesn't exist
         if not (root / "db_backup.sql").exists():
