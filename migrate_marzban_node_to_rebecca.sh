@@ -210,12 +210,12 @@ def replace_paths(value: str) -> str:
     value = re.sub(r'(:\s*["\']?)/var/lib/marzban', r'\1/var/lib/rebecca', value)
     return value
 
-def replace_image(value: str, default_tag: str) -> str
+def replace_image(value: str, default_tag: str) -> str:
     pattern = re.compile(
         r'(image:\s*["\']?)(?:ghcr\.io/)?marzban/marzban-node(?::[\w\.-]+)?',
         re.IGNORECASE,
     )
-    def _repl(match: re.Match) -> str:
+    def _repl(match: re.Match):
         return f"{match.group(1)}{repo}:{default_tag}"
     return pattern.sub(_repl, value)
 
@@ -227,6 +227,7 @@ PYCODE
     sed -i '/SERVICE_PROTOCOL/d' "$file"
     log "Updated references inside $file"
 }
+
 
 rewrite_env_file() {
     local file="$ENV_FILE"
