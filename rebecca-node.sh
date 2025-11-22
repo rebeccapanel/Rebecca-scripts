@@ -236,27 +236,15 @@ set_branch_variables() {
 }
 
 prompt_branch_selection() {
-    local question
-    if [[ "$BRANCH" == "dev" ]]; then
-        question="Keep using the dev branch? (Y/n): "
+    colorized_echo blue "Default image tag is 'latest' for rebeccapanel/rebecca-node."
+    read -rp "Do you want to use the 'dev' tag instead (rebeccapanel/rebecca-node:dev)? [y/N]: " answer || answer=""
+    if [[ "\$answer" =~ ^[Yy]$ ]]; then
+        set_branch_variables dev
+        colorized_echo blue "Using image tag 'dev' (rebeccapanel/rebecca-node:dev)."
     else
-        question="Do you want to install Rebecca-node using the dev branch? (y/N): "
+        set_branch_variables master
+        colorized_echo blue "Using image tag 'latest' (rebeccapanel/rebecca-node:latest)."
     fi
-    read -p "$question" -r branch_answer
-    if [[ "$BRANCH" == "dev" ]]; then
-        if [[ -z "$branch_answer" || "$branch_answer" =~ ^[Yy]$ ]]; then
-            set_branch_variables dev
-        else
-            set_branch_variables master
-        fi
-    else
-        if [[ "$branch_answer" =~ ^[Yy]$ ]]; then
-            set_branch_variables dev
-        else
-            set_branch_variables master
-        fi
-    fi
-    colorized_echo blue "Selected branch: $BRANCH (image tag: $IMAGE_TAG)"
 }
 
 BRANCH="master"
@@ -377,6 +365,58 @@ install_docker() {
     colorized_echo green "Docker installed successfully"
 }
 
+setup_ssl() {
+    SSL_CERT_PATH=""
+    SSL_KEY_PATH=""
+    
+    echo
+    read -p "Do you want to generate SSL certificate? (y/n) " -r ssl_answer
+    if [[ "$ssl_answer" =~ ^[Yy]$ ]]; then
+        read -p "Enter your email: " -r email
+        read -p "Enter your subdomain: " -r domain
+        
+        if ! command -v certbot >/dev/null 2>&1; then
+            install_package certbot
+        fi
+        
+        # Stop any process on port 80
+        if command -v systemctl >/dev/null; then
+            systemctl stop nginx >/dev/null 2>&1 || true
+            systemctl stop apache2 >/dev/null 2>&1 || true
+        fi
+        
+        colorized_echo blue "Generating SSL certificate for $domain..."
+        certbot certonly --standalone --non-interactive --agree-tos --email "$email" -d "$domain"
+        
+        if [ -d "/etc/letsencrypt/live/$domain" ]; then
+            cp "/etc/letsencrypt/live/$domain/fullchain.pem" "$DATA_DIR/ssl_cert.pem"
+            cp "/etc/letsencrypt/live/$domain/privkey.pem" "$DATA_DIR/ssl_key.pem"
+            
+            # Set permissions
+            chmod 644 "$DATA_DIR/ssl_cert.pem"
+            chmod 600 "$DATA_DIR/ssl_key.pem"
+            
+            SSL_CERT_PATH="/var/lib/rebecca-node/ssl_cert.pem"
+            SSL_KEY_PATH="/var/lib/rebecca-node/ssl_key.pem"
+            
+            colorized_echo green "SSL Certificates generated and copied."
+            
+            # Create .env file with SSL paths
+            echo "SSL_CERT_FILE=$SSL_CERT_PATH" > "$APP_DIR/.env"
+            echo "SSL_KEY_FILE=$SSL_KEY_PATH" >> "$APP_DIR/.env"
+        else
+            colorized_echo red "SSL generation failed."
+        fi
+    fi
+}
+
+cleanup_on_failure() {
+    local exit_code=$?
+    colorized_echo red "Installation failed, rolling back changes"
+    uninstall_rebecca_node_service
+    exit $exit_code
+}
+
 install_rebecca_node_service() {
     check_running_as_root
 
@@ -417,17 +457,6 @@ install_rebecca_node_service() {
         exit 1
     fi
 
-    colorized_echo blue "Downloading requirements from $NODE_SERVICE_REQUIREMENTS_URL"
-    if curl -sSL "$NODE_SERVICE_REQUIREMENTS_URL" -o "$NODE_SERVICE_REQUIREMENTS"; then
-        if head -n 1 "$NODE_SERVICE_REQUIREMENTS" | grep -qi "<!DOCTYPE\|<html"; then
-            colorized_echo yellow "requirements.txt is HTML, using fallback packages"
-            rm -f "$NODE_SERVICE_REQUIREMENTS"
-        fi
-    else
-        colorized_echo yellow "Failed to download requirements.txt, using fallback packages"
-        rm -f "$NODE_SERVICE_REQUIREMENTS"
-    fi
-
     PYTHON3_BIN=$(command -v python3)
     if [ -z "$PYTHON3_BIN" ]; then
         colorized_echo red "python3 is required but was not found."
@@ -439,7 +468,7 @@ install_rebecca_node_service() {
         rm -rf "$VENV_DIR"
     fi
 
-    colorized_echo blue "Creating virtualenv at $VENV_DIR"
+    colorized_echo blue "Creating maintenance virtualenv at $VENV_DIR"
     if ! "$PYTHON3_BIN" -m venv "$VENV_DIR"; then
         colorized_echo yellow "venv creation failed, installing python-venv package..."
         ensure_python3_venv
@@ -447,23 +476,37 @@ install_rebecca_node_service() {
     fi
 
     PYTHON_BIN="$VENV_DIR/bin/python"
-    PIP_BIN="$VENV_DIR/bin/pip"
+
+    trap 'cleanup_on_failure' ERR
+
+    colorized_echo blue "Downloading requirements from $NODE_SERVICE_REQUIREMENTS_URL"
+    if curl -sSL "$NODE_SERVICE_REQUIREMENTS_URL" -o "$NODE_SERVICE_REQUIREMENTS"; then
+        if head -n 1 "$NODE_SERVICE_REQUIREMENTS" | grep -qi "<!DOCTYPE\|<html"; then
+            colorized_echo yellow "requirements.txt is HTML, using fallback packages"
+            rm -f "$NODE_SERVICE_REQUIREMENTS"
+        fi
+    else
+        colorized_echo yellow "Failed to download requirements.txt, using fallback packages"
+        rm -f "$NODE_SERVICE_REQUIREMENTS"
+    fi
 
     colorized_echo blue "Installing Python dependencies inside venv..."
-    "$PIP_BIN" install --upgrade pip >/dev/null 2>&1 || true
+    "$PYTHON_BIN" -m pip install --upgrade pip >/dev/null 2>&1 || true
 
     install_fallback_packages() {
-        "$PIP_BIN" install --force-reinstall --no-cache-dir \
+        "$PYTHON_BIN" -m pip install --force-reinstall --no-cache-dir \
             'typing-extensions==4.12.2' \
             'pydantic-core==2.27.2' \
             'pydantic==2.10.5' \
             'fastapi==0.115.2' \
             'uvicorn[standard]==0.27.0.post1' \
-            'PyYAML==6.0.2'
+            'PyYAML==6.0.2' \
+            'python-multipart==0.0.9' \
+            'email-validator==2.2.0'
     }
 
     if [ -f "$NODE_SERVICE_REQUIREMENTS" ]; then
-        if ! "$PIP_BIN" install -r "$NODE_SERVICE_REQUIREMENTS" --force-reinstall --no-cache-dir; then
+        if ! "$PYTHON_BIN" -m pip install -r "$NODE_SERVICE_REQUIREMENTS" --force-reinstall --no-cache-dir; then
             colorized_echo yellow "Failed to install from requirements.txt, using fallback pinned packages"
             if ! install_fallback_packages; then
                 colorized_echo red "Failed to install maintenance dependencies"
@@ -511,6 +554,7 @@ EOF
         colorized_echo red "Failed to start maintenance service"
         exit 1
     fi
+    trap - ERR
 }
 
 update_rebecca_node_service() {
@@ -652,6 +696,8 @@ install_rebecca_node() {
         echo -e "\033[1;34m$1\033[0m"
     }
     
+    setup_ssl
+
     # Prompt the user to input the certificate
     echo -e "Please paste the content of the Client Certificate, press ENTER on a new line when finished: "
     
@@ -743,6 +789,16 @@ services:
       SERVICE_PORT: "$SERVICE_PORT"
       XRAY_API_PORT: "$XRAY_API_PORT"
       SERVICE_PROTOCOL: "$SERVICE_PROTOCOL_VALUE"
+EOL
+
+    if [ -n "$SSL_CERT_PATH" ]; then
+        cat >> "$COMPOSE_FILE" <<EOL
+      SSL_CERT_FILE: "$SSL_CERT_PATH"
+      SSL_KEY_FILE: "$SSL_KEY_PATH"
+EOL
+    fi
+
+    cat >> "$COMPOSE_FILE" <<EOL
 
     volumes:
       - $DATA_DIR:/var/lib/marzban-node
@@ -1089,10 +1145,11 @@ update_command() {
 
     update_rebecca_node_script
 
-    local unit
-    unit=$(resolve_node_service_unit_name)
-    if [ -n "$unit" ]; then
+    # Ensure service is updated/installed
+    if [ -d "$NODE_SERVICE_DIR" ]; then
         update_rebecca_node_service
+    else
+        install_rebecca_node_service
     fi
 
     colorized_echo blue "Pulling latest node image $DOCKER_IMAGE"
