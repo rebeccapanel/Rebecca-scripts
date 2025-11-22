@@ -346,6 +346,9 @@ main() {
     install_node_service
 
     log "Migration complete. Manage this node using '${SELECTED_NAME} up/down/...'."
+    
+    log "Starting node after migration..."
+    $SELECTED_NAME up
 }
 
 main "$@"

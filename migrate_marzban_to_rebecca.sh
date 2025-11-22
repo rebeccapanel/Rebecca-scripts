@@ -9,6 +9,10 @@ OLD_SERVICE_NAME="marzban"
 NEW_SERVICE_NAME="rebecca"
 SCRIPT_URL="https://github.com/rebeccapanel/Rebecca-scripts/raw/master/rebecca.sh"
 
+PANEL_IMAGE_REPO="rebeccapanel/rebecca-panel"
+DEFAULT_IMAGE_TAG="latest"
+PYTHON_BIN=""
+
 log() {
     echo -e "\e[96m[rebecca-migrate]\e[0m $1"
 }
@@ -25,6 +29,16 @@ error_exit() {
 require_root() {
     if [ "$(id -u)" -ne 0 ]; then
         error_exit "This script must be executed as root."
+    fi
+}
+
+detect_python() {
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="python"
+    else
+        error_exit "python3 or python is required for rewriting configuration files."
     fi
 }
 
@@ -69,7 +83,7 @@ replace_text_in_file() {
     shift
     local result
     result=$(
-        python - "$file" "$@" <<'PY'
+        "$PYTHON_BIN" - "$file" "$@" <<'PY'
 import sys
 from pathlib import Path
 
@@ -104,7 +118,7 @@ update_file_references() {
     fi
 
     if [[ "$file" == *.env ]]; then
-        warn "Skipping replacements inside $file to preserve database configuration. Update the addresses manually if needed."
+        warn "Skipping generic replacements for $file; use update_env_file_references instead."
         return
     fi
 
@@ -112,6 +126,105 @@ update_file_references() {
         "/var/lib/marzban" "/var/lib/rebecca" \
         "/opt/marzban" "/opt/rebecca" \
         "Marzban" "Rebecca"
+}
+
+choose_image_tag() {
+    log "Default image tag is 'latest' for $PANEL_IMAGE_REPO."
+    read -rp "Do you want to use the 'dev' tag instead (${PANEL_IMAGE_REPO}:dev)? [y/N]: " answer || answer=""
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        DEFAULT_IMAGE_TAG="dev"
+        log "Using image tag 'dev' (${PANEL_IMAGE_REPO}:dev)."
+    else
+        DEFAULT_IMAGE_TAG="latest"
+        log "Using image tag 'latest' (${PANEL_IMAGE_REPO}:latest)."
+    fi
+}
+
+update_compose_file() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        warn "$file not found. Skipping compose update."
+        return
+    fi
+
+    "$PYTHON_BIN" - "$file" "$PANEL_IMAGE_REPO" "$DEFAULT_IMAGE_TAG" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+repo = sys.argv[2]
+tag = sys.argv[3]
+text = path.read_text()
+
+def replace_paths(value: str) -> str:
+    value = value.replace("/var/lib/marzban", "/var/lib/rebecca")
+    value = value.replace("/opt/marzban", "/opt/rebecca")
+    value = value.replace("Marzban", "Rebecca")
+    return value
+
+def replace_image(value: str, repo: str, tag: str) -> str:
+    pattern = re.compile(
+        r'(image:\s*["\']?)(?:[^/\s]+/)*marzban(?::[\w\.\-]+)?',
+        re.IGNORECASE,
+    )
+    def _repl(match: re.Match):
+        return f"{match.group(1)}{repo}:{tag}"
+    return pattern.sub(_repl, value)
+
+updated = replace_image(replace_paths(text), repo, tag)
+
+if updated != text:
+    path.write_text(updated)
+PY
+
+    log "Updated docker-compose.yml (paths + image)"
+}
+
+update_env_file_references() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        warn "$file not found. Skipping .env update."
+        return
+    fi
+
+    "$PYTHON_BIN" - "$file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+original = path.read_text()
+lines = original.splitlines()
+
+updated_lines = []
+changed = False
+
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in line:
+        updated_lines.append(line)
+        continue
+
+    key, value = line.split("=", 1)
+
+    new_value = value
+    new_value = new_value.replace("/var/lib/marzban", "/var/lib/rebecca")
+    new_value = new_value.replace("/opt/marzban", "/opt/rebecca")
+
+    if new_value != value:
+        changed = True
+
+    updated_lines.append(f"{key}={new_value}")
+
+result = "\n".join(updated_lines)
+if original.endswith("\n"):
+    result += "\n"
+
+if changed:
+    path.write_text(result)
+PY
+
+    log "Updated path references inside .env (without touching passwords/usernames)"
 }
 
 migrate_systemd_service() {
@@ -199,9 +312,9 @@ restart_rebecca_panel() {
 
 main() {
     require_root
+    detect_python
     local compose_bin
     compose_bin=$(compose_binary)
-
 
     if [ -f "$OLD_APP_DIR/docker-compose.yml" ]; then
         log "Stopping existing Marzban stack"
@@ -211,8 +324,10 @@ main() {
     safe_move_directory "$OLD_APP_DIR" "$NEW_APP_DIR"
     safe_move_directory "$OLD_DATA_DIR" "$NEW_DATA_DIR"
 
-    update_file_references "$NEW_APP_DIR/docker-compose.yml"
-    update_file_references "$NEW_APP_DIR/.env"
+    choose_image_tag
+    update_compose_file "$NEW_APP_DIR/docker-compose.yml"
+
+    update_env_file_references "$NEW_APP_DIR/.env"
 
     migrate_systemd_service
     install_rebecca_cli
