@@ -172,13 +172,18 @@ def replace_image(value: str, repo: str, tag: str) -> str:
         return f"{match.group(1)}{repo}:{tag}"
     return pattern.sub(_repl, value)
 
-updated = replace_image(replace_paths(text), repo, tag)
+def replace_names(value: str) -> str:
+    value = re.sub(r'^(\s*)marzban(\s*:)', r'\1rebecca\2', value, flags=re.MULTILINE)
+    value = re.sub(r'(container_name:\s*["\']?)marzban(["\']?)', r'\1rebecca\2', value)
+    return value
+
+updated = replace_names(replace_image(replace_paths(text), repo, tag))
 
 if updated != text:
     path.write_text(updated)
 PY
 
-    log "Updated docker-compose.yml (paths + image)"
+    log "Updated docker-compose.yml (paths + image + names)"
 }
 
 update_env_file_references() {
