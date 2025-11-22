@@ -227,12 +227,39 @@ import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-original = path.read_text()
-text = re.sub(r'(=\s*["\']?)/var/lib/marzban-node', r'\1/var/lib/rebecca-node', original)
-text = re.sub(r'(=\s*["\']?)/var/lib/marzban', r'\1/var/lib/rebecca', text)
+original_text = path.read_text()
+lines = original_text.splitlines()
+replacements = [
+    (re.compile(r'(=\s*["\']?)/var/lib/marzban-node'), r"\1/var/lib/rebecca-node"),
+    (re.compile(r'(=\s*["\']?)/var/lib/marzban'), r"\1/var/lib/rebecca"),
+]
+skip_keywords = ("DATABASE",)
 
-if text != original:
-    path.write_text(text)
+updated_lines = []
+changed = False
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in line:
+        updated_lines.append(line)
+        continue
+    key = line.split("=", 1)[0].strip()
+    if any(keyword in key.upper() for keyword in skip_keywords):
+        updated_lines.append(line)
+        continue
+    new_line = line
+    for pattern, repl in replacements:
+        replaced = pattern.sub(repl, new_line)
+        if replaced != new_line:
+            changed = True
+            new_line = replaced
+    updated_lines.append(new_line)
+
+result_text = "\n".join(updated_lines)
+if original_text.endswith("\n"):
+    result_text = f"{result_text}\n"
+
+if changed:
+    path.write_text(result_text)
 PYCODE
 
     sed -i '/SERVICE_PROTOCOL/d' "$file" 2>/dev/null || true

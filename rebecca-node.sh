@@ -308,13 +308,13 @@ detect_and_update_package_manager() {
         PKG_MANAGER="yum"
         $PKG_MANAGER update -y -q >/dev/null 2>&1
         $PKG_MANAGER install -y -q epel-release >/dev/null 2>&1
-    elif [[ "$OS" == "Fedora"* ]] then
+    elif [[ "$OS" == "Fedora"* ]]; then
         PKG_MANAGER="dnf"
         $PKG_MANAGER update -q -y >/dev/null 2>&1
-    elif [[ "$OS" == "Arch"* ]] then
+    elif [[ "$OS" == "Arch"* ]]; then
         PKG_MANAGER="pacman"
         $PKG_MANAGER -Sy --noconfirm --quiet >/dev/null 2>&1
-    elif [[ "$OS" == "openSUSE"* ]] then
+    elif [[ "$OS" == "openSUSE"* ]]; then
         PKG_MANAGER="zypper"
         $PKG_MANAGER refresh --quiet >/dev/null 2>&1
     else
