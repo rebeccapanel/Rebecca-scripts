@@ -9,7 +9,7 @@ OLD_SERVICE_NAME="marzban"
 NEW_SERVICE_NAME="rebecca"
 SCRIPT_URL="https://github.com/rebeccapanel/Rebecca-scripts/raw/master/rebecca.sh"
 
-PANEL_IMAGE_REPO="rebeccapanel/rebecca-panel"
+PANEL_IMAGE_REPO="rebeccapanel/rebecca"
 DEFAULT_IMAGE_TAG="latest"
 PYTHON_BIN=""
 
