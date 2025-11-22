@@ -283,30 +283,24 @@ rerun_install_service_script() {
 
 restart_rebecca_panel() {
     local compose_bin="$1"
+    local compose_file="$NEW_APP_DIR/docker-compose.yml"
 
     if command -v rebecca >/dev/null 2>&1; then
-        if rebecca restart >/dev/null 2>&1; then
-            log "Rebecca has been restarted successfully via rebecca CLI."
-            return
-        else
-            warn "Rebecca CLI restart failed; falling back to docker compose."
-        fi
-    else
-        warn "Rebecca CLI not available; using docker compose to restart."
+        log "All migration steps completed. Handing over to 'rebecca restart' as final step."
+        log "From now on it is the same as running: rebecca restart"
+        exec rebecca restart
     fi
 
-    local compose_file="$NEW_APP_DIR/docker-compose.yml"
     if [ ! -f "$compose_file" ]; then
-        warn "Cannot find $compose_file to restart Rebecca via docker compose."
+        warn "Cannot find $compose_file to start Rebecca via docker compose."
         return
     fi
 
-    log "Restarting Rebecca stack using docker compose..."
-    $compose_bin -f "$compose_file" -p "$NEW_SERVICE_NAME" down >/dev/null 2>&1 || true
+    log "Rebecca CLI not found; starting Rebecca stack using docker compose."
     if $compose_bin -f "$compose_file" -p "$NEW_SERVICE_NAME" up -d --remove-orphans; then
-        log "Rebecca stack restarted successfully via docker compose."
+        log "Rebecca stack started successfully via docker compose."
     else
-        warn "Docker compose restart failed; please check the stack manually."
+        warn "Docker compose up failed; please check the stack manually."
     fi
 }
 
@@ -333,6 +327,9 @@ main() {
     install_rebecca_cli
     install_rebecca_service_unit
     rerun_install_service_script
+
+    log "Core migration steps are done."
+    log "Now we will restart the panel."
 
     restart_rebecca_panel "$compose_bin"
 
