@@ -176,6 +176,18 @@ select_node() {
     done
 }
 
+choose_image_tag() {
+    log "Default image tag is 'latest' for $NODE_IMAGE_REPO."
+    read -rp "Do you want to use the 'dev' tag instead (rebeccapanel/rebecca-node:dev)? [y/N]: " answer || answer=""
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        DEFAULT_IMAGE_TAG="dev"
+        log "Using image tag 'dev' (rebeccapanel/rebecca-node:dev)."
+    else
+        DEFAULT_IMAGE_TAG="latest"
+        log "Using image tag 'latest' (rebeccapanel/rebecca-node:latest)."
+    fi
+}
+
 rewrite_compose_file() {
     local file="$COMPOSE_FILE"
     if [ ! -f "$file" ]; then
@@ -190,7 +202,7 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 repo = sys.argv[2]
-tag = sys.argv[3]
+default_tag = sys.argv[3]
 text = path.read_text()
 
 def replace_paths(value: str) -> str:
@@ -198,14 +210,16 @@ def replace_paths(value: str) -> str:
     value = re.sub(r'(:\s*["\']?)/var/lib/marzban', r'\1/var/lib/rebecca', value)
     return value
 
-def replace_image(value: str, default_tag: str) -> str:
-    pattern = re.compile(r'(image:\s*["\']?)(?:ghcr\.io/)?marzban/marzban-node(?::(?P<tag>[\w\.-]+))?', re.IGNORECASE)
+def replace_image(value: str, default_tag: str) -> str
+    pattern = re.compile(
+        r'(image:\s*["\']?)(?:ghcr\.io/)?marzban/marzban-node(?::[\w\.-]+)?',
+        re.IGNORECASE,
+    )
     def _repl(match: re.Match) -> str:
-        current = match.group('tag') or default_tag
-        return f"{match.group(1)}{repo}:{current}"
+        return f"{match.group(1)}{repo}:{default_tag}"
     return pattern.sub(_repl, value)
 
-updated = replace_image(replace_paths(text), tag)
+updated = replace_image(replace_paths(text), default_tag)
 if updated != text:
     path.write_text(updated)
 PYCODE
@@ -319,6 +333,8 @@ main() {
 
     local compose_bin
     compose_bin=$(compose_binary)
+
+    choose_image_tag
 
     log "Migrating node '$SELECTED_NAME' located at $SELECTED_DIR"
     stop_old_stack "$compose_bin"
