@@ -212,7 +212,7 @@ def replace_paths(value: str) -> str:
 
 def replace_image(value: str, default_tag: str) -> str:
     pattern = re.compile(
-        r'(image:\s*["\']?)(?:ghcr\.io/)?marzban/marzban-node(?::[\w\.-]+)?',
+        r'(image:\s*["\']?)(?:ghcr\.io/)?gozargah/marzban-node(?::[\w\.-]+)?',
         re.IGNORECASE,
     )
     def _repl(match: re.Match):
