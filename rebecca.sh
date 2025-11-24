@@ -497,10 +497,11 @@ issue_ssl_self_signed_ip() {
 set_env_value() {
     local key="$1"
     local value="$2"
-    if grep -q "^$key" "$ENV_FILE" >/dev/null 2>&1; then
-        sed -i "s|^$key.*|$key = \"$value\"|" "$ENV_FILE"
+    value=$(echo "$value" | sed 's/^"//;s/"$//')
+    if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE" 2>/dev/null; then
+        sed -i "s|^[[:space:]]*${key}[[:space:]]*=.*|${key} = \"${value}\"|" "$ENV_FILE"
     else
-        echo "$key = \"$value\"" >> "$ENV_FILE"
+        echo "${key} = \"${value}\"" >> "$ENV_FILE"
     fi
 }
 
@@ -551,6 +552,17 @@ perform_ssl_issue() {
         provider_used="self-signed"
         sync_ssl_env_paths "$SSL_CERT_DIR" "self-signed"
         colorized_echo green "Self-signed SSL certificate generated at $SSL_CERT_DIR for IP(s): ${domains[*]}"
+        
+        if is_rebecca_installed; then
+            detect_compose
+            if is_rebecca_up; then
+                colorized_echo blue "Restarting Rebecca to apply SSL configuration..."
+                down_rebecca
+                up_rebecca
+                colorized_echo green "Rebecca restarted with SSL configuration"
+            fi
+        fi
+        
         return 0
     fi
 
@@ -572,6 +584,18 @@ perform_ssl_issue() {
 
     sync_ssl_env_paths "$SSL_CERT_DIR"
     colorized_echo green "SSL certificate installed at $SSL_CERT_DIR using $provider_used"
+    
+    # Check if Rebecca is installed and running, then restart to apply SSL changes
+    if is_rebecca_installed; then
+        detect_compose
+        if is_rebecca_up; then
+            colorized_echo blue "Restarting Rebecca to apply SSL configuration..."
+            down_rebecca
+            up_rebecca
+            colorized_echo green "Rebecca restarted with SSL configuration"
+        fi
+    fi
+    
     return 0
 }
 
@@ -743,6 +767,8 @@ ssl_renew() {
     read -ra stored_domains <<< "$domains_line"
     perform_ssl_issue "$email" "$provider" "${stored_domains[@]}" || return 1
     colorized_echo green "SSL certificate renewed for $target_domain"
+    
+    # Note: perform_ssl_issue already restarts Rebecca if needed
 }
 
 ssl_command() {
