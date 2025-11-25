@@ -2302,7 +2302,7 @@ edit_env_command() {
 service_status_command() {
     if [ ! -f "$SERVICE_UNIT" ]; then
         colorized_echo red "Rebecca maintenance service is not installed"
-        colorized_echo yellow "Install it with: rebecca install-service"
+        colorized_echo yellow "Install it with: rebecca service-install"
         exit 1
     fi
 
@@ -2315,12 +2315,82 @@ service_status_command() {
 service_logs_command() {
     if [ ! -f "$SERVICE_UNIT" ]; then
         colorized_echo red "Rebecca maintenance service is not installed"
-        colorized_echo yellow "Install it with: rebecca install-service"
+        colorized_echo yellow "Install it with: rebecca service-install"
         exit 1
     fi
 
     colorized_echo blue "Showing Rebecca maintenance service logs (Ctrl+C to exit)..."
     journalctl -u rebecca-maint.service -f
+}
+
+print_menu() {
+    colorized_echo blue "=============================="
+    colorized_echo magenta "           Rebecca Menu"
+    colorized_echo blue "=============================="
+    local entries=(
+        "up:Start services"
+        "down:Stop services"
+        "restart:Restart services"
+        "status:Show status"
+        "logs:Show logs"
+        "cli:Rebecca CLI"
+        "install:Install Rebecca"
+        "service-install:Install maintenance service"
+        "service-update:Update maintenance service"
+        "service-status:Show maintenance service status"
+        "service-logs:Show maintenance service logs"
+        "service-uninstall:Uninstall maintenance service"
+        "update:Update to latest version"
+        "uninstall:Uninstall Rebecca"
+        "script-install:Install Rebecca script"
+        "script-update:Update Rebecca CLI script"
+        "script-uninstall:Uninstall Rebecca script"
+        "backup:Manual backup launch"
+        "backup-service:Backup service (Telegram + cron job)"
+        "core-update:Update/Change Xray core"
+        "edit:Edit docker-compose.yml"
+        "edit-env:Edit environment file"
+        "ssl:Issue or renew SSL certificates"
+        "help:Show this help message"
+    )
+    local idx=1
+    for entry in "${entries[@]}"; do
+        local cmd="${entry%%:*}"
+        local desc="${entry#*:}"
+        printf " %2d) %-18s - %s\n" "$idx" "$cmd" "$desc"
+        idx=$((idx + 1))
+    done
+    echo
+}
+
+map_choice_to_command() {
+    case "$1" in
+        1) echo "up" ;;
+        2) echo "down" ;;
+        3) echo "restart" ;;
+        4) echo "status" ;;
+        5) echo "logs" ;;
+        6) echo "cli" ;;
+        7) echo "install" ;;
+        8) echo "service-install" ;;
+        9) echo "service-update" ;;
+        10) echo "service-status" ;;
+        11) echo "service-logs" ;;
+        12) echo "service-uninstall" ;;
+        13) echo "update" ;;
+        14) echo "uninstall" ;;
+        15) echo "script-install" ;;
+        16) echo "script-update" ;;
+        17) echo "script-uninstall" ;;
+        18) echo "backup" ;;
+        19) echo "backup-service" ;;
+        20) echo "core-update" ;;
+        21) echo "edit" ;;
+        22) echo "edit-env" ;;
+        23) echo "ssl" ;;
+        24) echo "help" ;;
+        *) echo "$1" ;;
+    esac
 }
 
 usage() {
@@ -2337,20 +2407,21 @@ usage() {
     colorized_echo yellow "  down            $(tput sgr0)– Stop services"
     colorized_echo yellow "  restart         $(tput sgr0)– Restart services"
     colorized_echo yellow "  status          $(tput sgr0)– Show status"
-    colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
-    colorized_echo yellow "  cli             $(tput sgr0)– Rebecca CLI"
+    colorized_echo yellow "  logs            $(tput sgr0)- Show logs"
+    colorized_echo yellow "  cli             $(tput sgr0)- Rebecca CLI"
     colorized_echo yellow "  install         $(tput sgr0)- Install Rebecca"
-    colorized_echo yellow "  install service $(tput sgr0)- Install only the maintenance service"
-    colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
-    colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Rebecca"
-    colorized_echo yellow "  install-script  $(tput sgr0)- Install Rebecca script"
-    colorized_echo yellow "  update-script   $(tput sgr0)- Update Rebecca CLI script"
-    colorized_echo yellow "  update-service  $(tput sgr0)- Update maintenance service binary"
-    colorized_echo yellow "  uninstall-service  $(tput sgr0)- Uninstall maintenance service"
+    colorized_echo yellow "  service-install $(tput sgr0)- Install maintenance service"
+    colorized_echo yellow "  service-update  $(tput sgr0)- Update maintenance service binary"
     colorized_echo yellow "  service-status  $(tput sgr0)- Show maintenance service status"
     colorized_echo yellow "  service-logs    $(tput sgr0)- Show maintenance service logs"
+    colorized_echo yellow "  service-uninstall $(tput sgr0)- Uninstall maintenance service"
+    colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
+    colorized_echo yellow "  uninstall       $(tput sgr0)- Uninstall Rebecca"
+    colorized_echo yellow "  script-install  $(tput sgr0)- Install Rebecca script"
+    colorized_echo yellow "  script-update   $(tput sgr0)- Update Rebecca CLI script"
+    colorized_echo yellow "  script-uninstall  $(tput sgr0)- Uninstall Rebecca script"
     colorized_echo yellow "  backup          $(tput sgr0)- Manual backup launch"
-    colorized_echo yellow "  backup-service  $(tput sgr0)– Rebecca Backupservice to backup to TG, and a new job in crontab"
+    colorized_echo yellow "  backup-service  $(tput sgr0)- Rebecca Backupservice to backup to TG, and a new job in crontab"
     colorized_echo yellow "  core-update     $(tput sgr0)- Update/Change Xray core"
     colorized_echo yellow "  edit            $(tput sgr0)- Edit docker-compose.yml (via nano or vi editor)"
     colorized_echo yellow "  edit-env        $(tput sgr0)- Edit environment file (via nano or vi editor)"
@@ -2369,51 +2440,46 @@ usage() {
     echo
 }
 
-case "$1" in
-    up)
-        shift; up_command "$@";;
-    down)
-        shift; down_command "$@";;
-    restart)
-        shift; restart_command "$@";;
-    status)
-        shift; status_command "$@";;
-    logs)
-        shift; logs_command "$@";;
-    cli)
-        shift; cli_command "$@";;
-    backup)
-        shift; backup_command "$@";;
-    backup-service)
-        shift; backup_service "$@";;
-    install)
-        shift; install_command "$@";;
-    install-service)
-        shift; install_rebecca_service "$@";;
-    update)
-        shift; update_command "$@";;
-    uninstall)
-        shift; uninstall_command "$@";;
-    install-script)
-        shift; install_rebecca_script "$@";;
-    update-script)
-        shift; install_rebecca_script "$@";;
-    update-service)
-        shift; update_rebecca_service "$@";;
-    uninstall-service)
-        shift; uninstall_rebecca_service "$@";;
-    core-update)
-        shift; update_core_command "$@";;
-    ssl)
-        shift; ssl_command "$@";;
-    edit)
-        shift; edit_command "$@";;
-    edit-env)
-        shift; edit_env_command "$@";;
-    service-status)
-        shift; service_status_command "$@";;
-    service-logs)
-        shift; service_logs_command "$@";;
-    help|*)
-        usage;;
-esac
+dispatch_command() {
+    local cmd="$1"
+    shift || true
+    case "$cmd" in
+        up) up_command "$@" ;;
+        down) down_command "$@" ;;
+        restart) restart_command "$@" ;;
+        status) status_command "$@" ;;
+        logs) logs_command "$@" ;;
+        cli) cli_command "$@" ;;
+        backup) backup_command "$@" ;;
+        backup-service) backup_service "$@" ;;
+        install) install_command "$@" ;;
+        service-install|install-service) install_rebecca_service "$@" ;;
+        service-update|update-service) update_rebecca_service "$@" ;;
+        service-uninstall|uninstall-service) uninstall_rebecca_service "$@" ;;
+        service-status) service_status_command "$@" ;;
+        service-logs) service_logs_command "$@" ;;
+        update) update_command "$@" ;;
+        uninstall) uninstall_command "$@" ;;
+        script-install|install-script) install_rebecca_script "$@" ;;
+        script-update|update-script) install_rebecca_script "$@" ;;
+        script-uninstall|uninstall-script) uninstall_rebecca_script "$@" ;;
+        core-update) update_core_command "$@" ;;
+        ssl) ssl_command "$@" ;;
+        edit) edit_command "$@" ;;
+        edit-env) edit_env_command "$@" ;;
+        help) usage ;;
+        *) usage ;;
+    esac
+}
+
+if [ $# -eq 0 ]; then
+    print_menu
+    read -rp "Select option (number or command): " user_choice
+    if [ -z "$user_choice" ]; then
+        exit 0
+    fi
+    mapped_command=$(map_choice_to_command "$user_choice")
+    set -- $mapped_command
+fi
+
+dispatch_command "$@"
