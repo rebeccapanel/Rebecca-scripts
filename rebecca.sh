@@ -501,8 +501,8 @@ set_env_value() {
     value=$(echo "$value" | sed 's/^"//;s/"$//')
     mkdir -p "$(dirname "$ENV_FILE")"
     touch "$ENV_FILE"
-    if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE" 2>/dev/null; then
-        sed -i "s|^[[:space:]]*${key}[[:space:]]*=.*|${key} = \"${value}\"|" "$ENV_FILE"
+    if grep -qE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE" 2>/dev/null; then
+        sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*=.*|${key} = \"${value}\"|" "$ENV_FILE"
     else
         echo "${key} = \"${value}\"" >> "$ENV_FILE"
     fi
@@ -512,6 +512,12 @@ persist_rebecca_service_env() {
     local host="${REBECCA_SCRIPT_HOST:-127.0.0.1}"
     local port="${REBECCA_SCRIPT_PORT:-3000}"
     local allowed="${REBECCA_SCRIPT_ALLOWED_HOSTS:-127.0.0.1,::1,localhost}"
+    if ! grep -q "Rebecca maintenance service (Rebecca-scripts/main.py)" "$ENV_FILE" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Rebecca maintenance service (Rebecca-scripts/main.py)"
+        } >> "$ENV_FILE"
+    fi
     set_env_value "REBECCA_SCRIPT_HOST" "$host"
     set_env_value "REBECCA_SCRIPT_PORT" "$port"
     set_env_value "REBECCA_MAINT_PORT" "$port"
