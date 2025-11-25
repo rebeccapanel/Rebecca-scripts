@@ -31,6 +31,7 @@ set_app_context() {
     COMPOSE_FILE="$APP_DIR/docker-compose.yml"
     BRANCH_FILE="$APP_DIR/.branch"
     CERT_FILE="$DATA_DIR/cert.pem"
+    ENV_FILE="$APP_DIR/.env"
 
     NODE_SERVICE_DIR="/usr/local/share/${APP_NAME}-maintenance"
     NODE_SERVICE_FILE="$NODE_SERVICE_DIR/main.py"
@@ -125,6 +126,30 @@ colorized_echo() {
             echo "${text}"
         ;;
     esac
+}
+
+ensure_env_file() {
+    mkdir -p "$(dirname "$ENV_FILE")"
+    touch "$ENV_FILE"
+}
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    value=$(echo "$value" | sed 's/^"//;s/"$//')
+    ensure_env_file
+    if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE" 2>/dev/null; then
+        sed -i "s|^[[:space:]]*${key}[[:space:]]*=.*|${key} = \"${value}\"|" "$ENV_FILE"
+    else
+        echo "${key} = \"${value}\"" >> "$ENV_FILE"
+    fi
+}
+
+persist_rebecca_node_service_env() {
+    local host="${REBECCA_NODE_SCRIPT_HOST:-127.0.0.1}"
+    local port="${REBECCA_NODE_SCRIPT_PORT:-3100}"
+    set_env_value "REBECCA_NODE_SCRIPT_HOST" "$host"
+    set_env_value "REBECCA_NODE_SCRIPT_PORT" "$port"
 }
 
 extract_container_name() {
@@ -544,6 +569,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now "$NODE_SERVICE_UNIT_NAME"
+    persist_rebecca_node_service_env
     trap - ERR
     colorized_echo green "Rebecca-node maintenance service installed and started for $APP_NAME"
     echo
