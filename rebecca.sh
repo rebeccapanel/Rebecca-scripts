@@ -5,6 +5,15 @@ INSTALL_DIR="/opt"
 if [ -z "$APP_NAME" ]; then
     APP_NAME="rebecca"
 fi
+ensure_valid_app_name() {
+    local candidate="${APP_NAME:-rebecca}"
+    if ! [[ "$candidate" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+        candidate="rebecca"
+        echo "Invalid app name detected. Falling back to default: $candidate"
+    fi
+    APP_NAME="$candidate"
+}
+ensure_valid_app_name
 APP_DIR="$INSTALL_DIR/$APP_NAME"
 DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"

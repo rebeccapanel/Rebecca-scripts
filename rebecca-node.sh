@@ -11,10 +11,20 @@ SCRIPT_BASENAME="${SCRIPT_NAME%.*}"
 declare -a DISCOVERED_NODE_PATHS=()
 declare -a DISCOVERED_NODE_NAMES=()
 
+ensure_valid_app_name() {
+    local candidate="${APP_NAME:-$SCRIPT_BASENAME}"
+    if ! [[ "$candidate" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+        candidate="rebecca-node"
+        echo "Invalid app name detected. Falling back to default: $candidate"
+    fi
+    APP_NAME="$candidate"
+}
+
 set_app_context() {
     if [ -z "$APP_NAME" ]; then
         APP_NAME="$SCRIPT_BASENAME"
     fi
+    ensure_valid_app_name
 
     if [ -z "${APP_DIR:-}" ] || [ ! -d "$APP_DIR" ]; then
         if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
@@ -82,6 +92,7 @@ fi
 if [ -z "$APP_NAME" ]; then
     APP_NAME="$SCRIPT_BASENAME"
 fi
+ensure_valid_app_name
 
 LAST_XRAY_CORES=5
 
