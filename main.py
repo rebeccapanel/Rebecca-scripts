@@ -411,17 +411,12 @@ def copy_directory(source: Path, destination: Path, excluded: Optional[List[Path
             for excluded_path in excluded:
                 excluded_str = str(excluded_path)
                 full_str = str(full_path)
-                if full_str == excluded_str or full_str.startswith(f"{excluded_str}{os.sep}"):
-                    ignored.append(name)
-                    break
+            if full_str == excluded_str or full_str.startswith(f"{excluded_str}{os.sep}"):
+                ignored.append(name)
+                break
         return ignored
 
     shutil.copytree(source, destination, dirs_exist_ok=True, ignore=_ignore)
-
-        return
-    except Exception as exc:
-        logger.warning("Failed to run mysqldump: %s", exc)
-        return
 
 
 def cleanup_file(path: Path) -> None:
