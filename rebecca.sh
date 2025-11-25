@@ -2184,7 +2184,10 @@ update_command() {
     
     detect_compose
     
+    colorized_echo blue "Updating Rebecca CLI and maintenance service..."
     update_rebecca_script
+    update_rebecca_service
+
     colorized_echo blue "Pulling latest version"
     update_rebecca
     
