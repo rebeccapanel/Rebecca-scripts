@@ -2360,7 +2360,13 @@ print_menu() {
     for entry in "${entries[@]}"; do
         local cmd="${entry%%:*}"
         local desc="${entry#*:}"
-        printf " %2d) %-18s - %s\n" "$idx" "$cmd" "$desc"
+        local color="yellow"
+        if [[ "$cmd" == service-* ]]; then
+            color="green"
+        elif [[ "$cmd" == script-* ]]; then
+            color="blue"
+        fi
+        colorized_echo "$color" "$(printf " %2d) %-18s - %s" "$idx" "$cmd" "$desc")"
         idx=$((idx + 1))
     done
     echo

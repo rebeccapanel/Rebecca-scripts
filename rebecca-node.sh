@@ -46,12 +46,12 @@ while [[ $# -gt 0 ]]; do
     key="$1"
     
     case $key in
-        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|update-script|uninstall-script|install-service|uninstall-service|service-status|service-logs|edit)
+        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|update-script|uninstall-script|install-service|uninstall-service|service-status|service-logs|edit|service-install|service-update|service-uninstall|script-install|script-update|script-uninstall|help)
             COMMAND="$1"
             shift # past argument
         ;;
         --name)
-            if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" || "$COMMAND" == "install-service" ]]; then
+            if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" || "$COMMAND" == "install-service" || "$COMMAND" == "service-install" || "$COMMAND" == "script-install" ]]; then
                 APP_NAME="$2"
                 APP_NAME_FROM_ARG=1
                 shift # past argument
@@ -1515,7 +1515,7 @@ service_status_command() {
 
     if [ -z "$target_unit" ]; then
         colorized_echo red "Rebecca-node maintenance service is not installed"
-        colorized_echo yellow "Install it with: $APP_NAME install-service"
+        colorized_echo yellow "Install it with: $APP_NAME service-install"
         exit 1
     fi
 
@@ -1539,7 +1539,7 @@ service_logs_command() {
 
     if [ -z "$unit" ]; then
         colorized_echo red "Rebecca-node maintenance service is not installed"
-        colorized_echo yellow "Install it with: $APP_NAME install-service"
+        colorized_echo yellow "Install it with: $APP_NAME service-install"
         exit 1
     fi
 
@@ -1563,15 +1563,16 @@ usage() {
     colorized_echo yellow "  status          $(tput sgr0)– Show status"
     colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
     colorized_echo yellow "  install         $(tput sgr0)- Install/reinstall Rebecca-node"
-    colorized_echo yellow "  install-service $(tput sgr0)- Install maintenance service"
-    colorized_echo yellow "  uninstall-service $(tput sgr0)- Uninstall maintenance service"
-    colorized_echo yellow "  service-status  $(tput sgr0)- Show maintenance service status"
-    colorized_echo yellow "  service-logs    $(tput sgr0)- Show maintenance service logs"
+    colorized_echo green "  service-install $(tput sgr0)- Install maintenance service"
+    colorized_echo green "  service-update  $(tput sgr0)- Update maintenance service"
+    colorized_echo green "  service-status  $(tput sgr0)- Show maintenance service status"
+    colorized_echo green "  service-logs    $(tput sgr0)- Show maintenance service logs"
+    colorized_echo green "  service-uninstall $(tput sgr0)- Uninstall maintenance service"
     colorized_echo yellow "  update          $(tput sgr0)- Update to latest version"
-    colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Rebecca-node"
-    colorized_echo yellow "  install-script  $(tput sgr0)- Install Rebecca-node script"
-    colorized_echo yellow "  update-script   $(tput sgr0)- Update Rebecca-node CLI script"
-    colorized_echo yellow "  uninstall-script  $(tput sgr0)– Uninstall Rebecca-node script"
+    colorized_echo yellow "  uninstall       $(tput sgr0)- Uninstall Rebecca-node"
+    colorized_echo blue "  script-install  $(tput sgr0)- Install Rebecca-node script"
+    colorized_echo blue "  script-update   $(tput sgr0)- Update Rebecca-node CLI script"
+    colorized_echo blue "  script-uninstall  $(tput sgr0)- Uninstall Rebecca-node script"
     colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
     colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
     
@@ -1625,63 +1626,109 @@ usage() {
     echo
 }
 
-case "$COMMAND" in
-    install)
-        install_command
-    ;;
-    update)
-        update_command
-    ;;
-    uninstall)
-        uninstall_command
-    ;;
-    up)
-        up_command
-    ;;
-    down)
-        down_command
-    ;;
-    restart)
-        restart_command
-    ;;
-    status)
-        status_command
-    ;;
-    logs)
-        logs_command
-    ;;
-    core-update)
-        update_core_command
-    ;;
-    install-script)
-        install_rebecca_node_script
-    ;;
-    update-script)
-        install_rebecca_node_script
-    ;;
-    uninstall-script)
-        uninstall_rebecca_node_script
-    ;;
-    install-service)
-        install_rebecca_node_service
-    ;;
-    uninstall-service)
-        uninstall_rebecca_node_service
-        colorized_echo green "Rebecca-node maintenance service uninstalled successfully"
-    ;;
-    service-status)
-        service_status_command
-    ;;
-    service-logs)
-        service_logs_command
-    ;;
-    edit)
-        edit_command
-    ;;
-    update-service)
-        update_rebecca_node_service
-    ;;
-    *)
-        usage
-    ;;
-esac
+print_menu() {
+    colorized_echo blue "================================"
+    colorized_echo magenta "       $APP_NAME Node Menu"
+    colorized_echo blue "================================"
+    local entries=(
+        "up:Start services"
+        "down:Stop services"
+        "restart:Restart services"
+        "status:Show status"
+        "logs:Show logs"
+        "install:Install/reinstall Rebecca-node"
+        "service-install:Install maintenance service"
+        "service-update:Update maintenance service"
+        "service-status:Show maintenance service status"
+        "service-logs:Show maintenance service logs"
+        "service-uninstall:Uninstall maintenance service"
+        "update:Update to latest version"
+        "uninstall:Uninstall Rebecca-node"
+        "script-install:Install Rebecca-node script"
+        "script-update:Update Rebecca-node CLI script"
+        "script-uninstall:Uninstall Rebecca-node script"
+        "core-update:Update/Change Xray core"
+        "edit:Edit docker-compose.yml"
+        "help:Show this help message"
+    )
+    local idx=1
+    for entry in "${entries[@]}"; do
+        local cmd="${entry%%:*}"
+        local desc="${entry#*:}"
+        local color="yellow"
+        if [[ "$cmd" == service-* ]]; then
+            color="green"
+        elif [[ "$cmd" == script-* ]]; then
+            color="blue"
+        fi
+        colorized_echo "$color" "$(printf " %2d) %-18s - %s" "$idx" "$cmd" "$desc")"
+        idx=$((idx + 1))
+    done
+    echo
+}
+
+map_choice_to_command() {
+    case "$1" in
+        1) echo "up" ;;
+        2) echo "down" ;;
+        3) echo "restart" ;;
+        4) echo "status" ;;
+        5) echo "logs" ;;
+        6) echo "install" ;;
+        7) echo "service-install" ;;
+        8) echo "service-update" ;;
+        9) echo "service-status" ;;
+        10) echo "service-logs" ;;
+        11) echo "service-uninstall" ;;
+        12) echo "update" ;;
+        13) echo "uninstall" ;;
+        14) echo "script-install" ;;
+        15) echo "script-update" ;;
+        16) echo "script-uninstall" ;;
+        17) echo "core-update" ;;
+        18) echo "edit" ;;
+        19) echo "help" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+dispatch_command() {
+    local cmd="$1"
+    shift || true
+    case "$cmd" in
+        install) install_command ;;
+        update) update_command ;;
+        uninstall) uninstall_command ;;
+        up) up_command ;;
+        down) down_command ;;
+        restart) restart_command ;;
+        status) status_command ;;
+        logs) logs_command ;;
+        core-update) update_core_command ;;
+        install-script|script-install) install_rebecca_node_script ;;
+        update-script|script-update) install_rebecca_node_script ;;
+        uninstall-script|script-uninstall) uninstall_rebecca_node_script ;;
+        install-service|service-install) install_rebecca_node_service ;;
+        uninstall-service|service-uninstall)
+            uninstall_rebecca_node_service
+            colorized_echo green "Rebecca-node maintenance service uninstalled successfully"
+        ;;
+        service-status) service_status_command ;;
+        service-logs) service_logs_command ;;
+        edit) edit_command ;;
+        update-service|service-update) update_rebecca_node_service ;;
+        help) usage ;;
+        *) usage ;;
+    esac
+}
+
+if [ -z "${COMMAND:-}" ]; then
+    print_menu
+    read -rp "Select option (number or command): " user_choice
+    if [ -z "$user_choice" ]; then
+        exit 0
+    fi
+    COMMAND=$(map_choice_to_command "$user_choice")
+fi
+
+dispatch_command "$COMMAND"
