@@ -406,7 +406,7 @@ install_docker() {
 
 cleanup_node_service_on_failure() {
     local exit_code=$?
-    colorized_echo red "Maintenance service installation failed, rolling back changes"
+    colorized_echo yellow "Maintenance service installation failed, continuing without service..."
 
     local unit_file="$NODE_SERVICE_UNIT"
     local legacy_file="/etc/systemd/system/rebecca-node-maint.service"
@@ -431,7 +431,8 @@ cleanup_node_service_on_failure() {
         rm -rf "$NODE_SERVICE_DIR"
     fi
 
-    exit "$exit_code"
+    # Don't exit, just return with error code
+    return "$exit_code"
 }
 
 install_rebecca_node_service() {
@@ -471,18 +472,21 @@ install_rebecca_node_service() {
     colorized_echo blue "Downloading node maintenance service from $NODE_SERVICE_SOURCE_URL"
     if ! curl -sSL "$NODE_SERVICE_SOURCE_URL" -o "$NODE_SERVICE_FILE"; then
         colorized_echo red "Failed to download service file from $NODE_SERVICE_SOURCE_URL"
-        exit 1
+        cleanup_node_service_on_failure
+        return 1
     fi
     if head -n 1 "$NODE_SERVICE_FILE" | grep -qi "<!DOCTYPE\|<html"; then
         colorized_echo red "Downloaded service file is not valid Python"
         rm -f "$NODE_SERVICE_FILE"
-        exit 1
+        cleanup_node_service_on_failure
+        return 1
     fi
 
     PYTHON3_BIN=$(command -v python3)
     if [ -z "$PYTHON3_BIN" ]; then
         colorized_echo red "python3 is required but was not found."
-        exit 1
+        cleanup_node_service_on_failure
+        return 1
     fi
 
     local VENV_DIR="$NODE_SERVICE_DIR/venv"
@@ -534,13 +538,15 @@ install_rebecca_node_service() {
             colorized_echo yellow "Failed to install from requirements.txt, using fallback pinned packages"
             if ! install_fallback_packages; then
                 colorized_echo red "Failed to install maintenance dependencies"
-                exit 1
+                cleanup_node_service_on_failure
+                return 1
             fi
         fi
     else
         if ! install_fallback_packages; then
             colorized_echo red "Failed to install maintenance dependencies"
-            exit 1
+            cleanup_node_service_on_failure
+            return 1
         fi
     fi
 
@@ -568,7 +574,12 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now "$NODE_SERVICE_UNIT_NAME"
+    if ! systemctl enable --now "$NODE_SERVICE_UNIT_NAME" 2>/dev/null; then
+        colorized_echo red "Failed to enable/start maintenance service"
+        trap - ERR
+        cleanup_node_service_on_failure
+        return 1
+    fi
     persist_rebecca_node_service_env
     trap - ERR
     colorized_echo green "Rebecca-node maintenance service installed and started for $APP_NAME"
@@ -913,7 +924,10 @@ install_command() {
     detect_compose
     install_rebecca_node_script
     install_rebecca_node
-    install_rebecca_node_service
+    if ! install_rebecca_node_service; then
+        colorized_echo yellow "Warning: Maintenance service installation failed, but node installation will continue."
+        colorized_echo yellow "You can install the service later with: $APP_NAME install-service"
+    fi
     up_rebecca_node
     follow_rebecca_node_logs
     echo "Use your IP: $NODE_IP and defaults ports: $SERVICE_PORT and $XRAY_API_PORT to setup your Rebecca Main Panel"

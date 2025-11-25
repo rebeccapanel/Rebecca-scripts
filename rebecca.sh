@@ -179,13 +179,15 @@ install_rebecca_service() {
     if head -n 1 "$SERVICE_FILE" | grep -qi "<!DOCTYPE\|<html"; then
         colorized_echo red "Downloaded maintenance service file is not valid Python"
         rm -f "$SERVICE_FILE"
-        exit 1
+        cleanup_on_failure
+        return 1
     fi
 
     PYTHON3_BIN=$(command -v python3)
     if [ -z "$PYTHON3_BIN" ]; then
         colorized_echo red "python3 is required but was not found."
-        exit 1
+        cleanup_on_failure
+        return 1
     fi
 
     VENV_DIR="$SERVICE_DIR/venv"
@@ -241,13 +243,15 @@ install_rebecca_service() {
             colorized_echo yellow "Failed to install using downloaded requirements. Falling back to pinned packages."
             install_fallback_packages || {
                 colorized_echo red "Failed to install maintenance service dependencies."
-                exit 1
+                cleanup_on_failure
+                return 1
             }
         fi
     else
         install_fallback_packages || {
             colorized_echo red "Failed to install maintenance service dependencies."
-            exit 1
+            cleanup_on_failure
+            return 1
         }
     fi
 
@@ -279,7 +283,12 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now rebecca-maint.service
+    if ! systemctl enable --now rebecca-maint.service 2>/dev/null; then
+        colorized_echo red "Failed to enable/start maintenance service"
+        trap - ERR
+        cleanup_on_failure
+        return 1
+    fi
     persist_rebecca_service_env
     trap - ERR
     colorized_echo green "Rebecca maintenance service installed and started"
@@ -298,13 +307,16 @@ uninstall_rebecca_service() {
 
 cleanup_on_failure() {
     local exit_code=$?
-    colorized_echo red "Installation failed, rolling back changes"
+    colorized_echo yellow "Maintenance service installation failed, continuing without service..."
+
     systemctl disable --now rebecca-maint.service >/dev/null 2>&1 || true
     rm -f "$SERVICE_UNIT"
     if [ "$SERVICE_DIR_CREATED" = "1" ]; then
         rm -rf "$SERVICE_DIR"
     fi
-    exit "$exit_code"
+
+    # Don't exit, just return with error code
+    return "$exit_code"
 }
 
 trim_string() {
@@ -512,6 +524,13 @@ persist_rebecca_service_env() {
     local host="${REBECCA_SCRIPT_HOST:-127.0.0.1}"
     local port="${REBECCA_SCRIPT_PORT:-3000}"
     local allowed="${REBECCA_SCRIPT_ALLOWED_HOSTS:-127.0.0.1,::1,localhost}"
+    
+    # Ensure .env file exists
+    if [ ! -f "$ENV_FILE" ]; then
+        mkdir -p "$(dirname "$ENV_FILE")"
+        touch "$ENV_FILE"
+    fi
+    
     if ! grep -q "Rebecca maintenance service (Rebecca-scripts/main.py)" "$ENV_FILE" 2>/dev/null; then
         {
             echo ""
@@ -1420,6 +1439,22 @@ install_rebecca() {
     docker_file_path="$APP_DIR/docker-compose.yml"
     
     if [ "$database_type" == "mariadb" ]; then
+        # Ensure .env file exists before creating docker-compose.yml
+        if [ ! -f "$ENV_FILE" ]; then
+            colorized_echo blue "Fetching .env file"
+            curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env" || {
+                mkdir -p "$(dirname "$ENV_FILE")"
+                touch "$ENV_FILE"
+            }
+        fi
+        
+        # Ensure .env file exists before creating docker-compose.yml
+        if [ ! -f "$ENV_FILE" ]; then
+            mkdir -p "$(dirname "$ENV_FILE")"
+            colorized_echo blue "Fetching .env file"
+            curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env" || touch "$APP_DIR/.env"
+        fi
+        
         # Generate docker-compose.yml with MariaDB content
         cat > "$docker_file_path" <<EOF
 services:
@@ -1476,9 +1511,11 @@ EOF
         echo "----------------------------"
         colorized_echo green "File generated at $APP_DIR/docker-compose.yml"
 
-        # Modify .env file
-        colorized_echo blue "Fetching .env file"
-        curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
+        # Modify .env file (if not already fetched)
+        if [ ! -f "$ENV_FILE" ] || [ ! -s "$ENV_FILE" ]; then
+            colorized_echo blue "Fetching .env file"
+            curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
+        fi
 
         # Comment out the SQLite line
         sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/rebecca/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
@@ -1511,6 +1548,13 @@ EOF
         colorized_echo green "File saved in $APP_DIR/.env"
 
     elif [ "$database_type" == "mysql" ]; then
+        # Ensure .env file exists before creating docker-compose.yml
+        if [ ! -f "$ENV_FILE" ]; then
+            mkdir -p "$(dirname "$ENV_FILE")"
+            colorized_echo blue "Fetching .env file"
+            curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env" || touch "$APP_DIR/.env"
+        fi
+        
         # Generate docker-compose.yml with MySQL content
         cat > "$docker_file_path" <<EOF
 services:
@@ -1568,9 +1612,11 @@ EOF
         echo "----------------------------"
         colorized_echo green "File generated at $APP_DIR/docker-compose.yml"
 
-        # Modify .env file
-        colorized_echo blue "Fetching .env file"
-        curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
+        # Modify .env file (if not already fetched)
+        if [ ! -f "$ENV_FILE" ] || [ ! -s "$ENV_FILE" ]; then
+            colorized_echo blue "Fetching .env file"
+            curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
+        fi
 
         # Comment out the SQLite line
         sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/rebecca/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
@@ -1606,6 +1652,13 @@ EOF
         echo "----------------------------"
         colorized_echo red "Using SQLite as database"
         echo "----------------------------"
+        
+        # Ensure .env file exists before fetching docker-compose.yml
+        if [ ! -f "$ENV_FILE" ]; then
+            mkdir -p "$(dirname "$ENV_FILE")"
+            touch "$APP_DIR/.env"
+        fi
+        
         colorized_echo blue "Fetching compose file"
         curl -sL "$FILES_URL_PREFIX/docker-compose.yml" -o "$docker_file_path"
 
@@ -1778,7 +1831,10 @@ install_command() {
     fi
     detect_compose
     install_rebecca_script
-    install_rebecca_service
+    if ! install_rebecca_service; then
+        colorized_echo yellow "Warning: Maintenance service installation failed, but Rebecca installation will continue."
+        colorized_echo yellow "You can install the service later with: rebecca install service"
+    fi
     # Function to check if a version exists in the GitHub releases
     check_version_exists() {
         local version=$1
