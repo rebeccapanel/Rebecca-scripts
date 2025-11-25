@@ -1831,10 +1831,6 @@ install_command() {
     fi
     detect_compose
     install_rebecca_script
-    if ! install_rebecca_service; then
-        colorized_echo yellow "Warning: Maintenance service installation failed, but Rebecca installation will continue."
-        colorized_echo yellow "You can install the service later with: rebecca install service"
-    fi
     # Function to check if a version exists in the GitHub releases
     check_version_exists() {
         local version=$1
@@ -1867,6 +1863,14 @@ install_command() {
         exit 1
     fi
     prompt_ssl_setup
+    set +e
+    install_rebecca_service
+    service_status=$?
+    set -e
+    if [ "$service_status" -ne 0 ]; then
+        colorized_echo yellow "Warning: Maintenance service installation failed, but Rebecca installation will continue."
+        colorized_echo yellow "You can install the service later with: rebecca install service"
+    fi
     up_rebecca
     follow_rebecca_logs
 }

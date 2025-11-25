@@ -924,7 +924,11 @@ install_command() {
     detect_compose
     install_rebecca_node_script
     install_rebecca_node
-    if ! install_rebecca_node_service; then
+    set +e
+    install_rebecca_node_service
+    service_status=$?
+    set -e
+    if [ "$service_status" -ne 0 ]; then
         colorized_echo yellow "Warning: Maintenance service installation failed, but node installation will continue."
         colorized_echo yellow "You can install the service later with: $APP_NAME install-service"
     fi
