@@ -529,6 +529,94 @@ set_env_value() {
     fi
 }
 
+add_redis_to_compose() {
+    local compose_file="$1"
+    
+    # Check if Redis service already exists
+    if grep -q "^\s*redis:" "$compose_file" 2>/dev/null; then
+        return 0
+    fi
+    
+    # Add Redis service to docker-compose.yml
+    if command -v yq >/dev/null 2>&1; then
+        yq eval '.services.redis = {
+            "image": "redis:7-alpine",
+            "restart": "unless-stopped",
+            "command": ["redis-server", "--appendonly", "yes"],
+            "volumes": ["/var/lib/rebecca/redis:/data"],
+            "ports": ["6379:6379"]
+        }' -i "$compose_file"
+    else
+        # Fallback: append manually at the end of services section
+        # Find the last service entry and add Redis after it
+        # This works for both mariadb/mysql and sqlite modes
+        cat >> "$compose_file" <<EOF
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /var/lib/rebecca/redis:/data
+    ports:
+      - "6379:6379"
+EOF
+    fi
+}
+
+configure_redis_env() {
+    # Ensure Redis configuration section exists in .env
+    if ! grep -q "# Redis configuration" "$ENV_FILE" 2>/dev/null; then
+        echo "" >> "$ENV_FILE"
+        echo "# Redis configuration for subscription caching" >> "$ENV_FILE"
+    fi
+    
+    # Set Redis environment variables
+    set_env_value "REDIS_ENABLED" "true"
+    set_env_value "REDIS_HOST" "127.0.0.1"
+    set_env_value "REDIS_PORT" "6379"
+    set_env_value "REDIS_DB" "0"
+    # REDIS_PASSWORD is optional, leave it empty by default
+    if ! grep -qE "^[[:space:]]*#?[[:space:]]*REDIS_PASSWORD[[:space:]]*=" "$ENV_FILE" 2>/dev/null; then
+        echo "REDIS_PASSWORD = " >> "$ENV_FILE"
+    fi
+    set_env_value "REDIS_AUTO_START" "true"
+    
+    # Create Redis data directory
+    mkdir -p /var/lib/rebecca/redis
+}
+
+enable_redis() {
+    check_running_as_root
+    
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca is not installed. Please install Rebecca first."
+        exit 1
+    fi
+    
+    detect_compose
+    
+    colorized_echo blue "Enabling Redis for subscription caching..."
+    
+    # Add Redis service to docker-compose.yml
+    add_redis_to_compose "$COMPOSE_FILE"
+    colorized_echo green "Redis service added to docker-compose.yml"
+    
+    # Configure Redis in .env
+    configure_redis_env
+    colorized_echo green "Redis configuration added to .env file"
+    
+    # Restart services if running
+    if is_rebecca_up; then
+        colorized_echo blue "Restarting services to apply Redis configuration..."
+        down_rebecca
+        up_rebecca
+        colorized_echo green "Services restarted. Redis is now enabled."
+    else
+        colorized_echo green "Redis enabled. Start services with: rebecca up"
+    fi
+}
+
 persist_rebecca_service_env() {
     local host="${REBECCA_SCRIPT_HOST:-127.0.0.1}"
     local port="${REBECCA_SCRIPT_PORT:-3000}"
@@ -1703,6 +1791,19 @@ EOF
     curl -sL "$FILES_URL_PREFIX/xray_config.json" -o "$DATA_DIR/xray_config.json"
     colorized_echo green "File saved in $DATA_DIR/xray_config.json"
     
+    # Ask about Redis installation
+    echo ""
+    read -p "Do you want to install Redis for subscription caching? (y/N): " install_redis_answer
+    if [[ "$install_redis_answer" =~ ^[Yy]$ ]]; then
+        colorized_echo blue "Adding Redis to docker-compose.yml..."
+        add_redis_to_compose "$docker_file_path"
+        colorized_echo green "Redis service added to docker-compose.yml"
+        
+        colorized_echo blue "Configuring Redis in .env file..."
+        configure_redis_env
+        colorized_echo green "Redis configuration added to .env file"
+    fi
+    
     colorized_echo green "Rebecca's files downloaded successfully"
 }
 
@@ -2319,11 +2420,32 @@ update_rebecca_service() {
         return
     fi
 
+    # Clean pip cache before updating to prevent disk space issues
+    colorized_echo blue "Cleaning pip cache..."
+    "$PYTHON_BIN" -m pip cache purge >/dev/null 2>&1 || true
+
+    # Uninstall old packages to free up disk space before installing new ones
+    # Skip essential packages (pip, setuptools, wheel) as they are required
+    colorized_echo blue "Uninstalling old packages to free disk space..."
+    installed_packages=$("$PYTHON_BIN" -m pip list --format=freeze 2>/dev/null | cut -d'=' -f1 | grep -v "^pip$\|^setuptools$\|^wheel$" || true)
+    if [ -n "$installed_packages" ]; then
+        echo "$installed_packages" | while IFS= read -r package; do
+            if [ -n "$package" ]; then
+                "$PYTHON_BIN" -m pip uninstall -y "$package" >/dev/null 2>&1 || true
+            fi
+        done
+    fi
+
     "$PYTHON_BIN" -m pip install --upgrade pip >/dev/null 2>&1 || true
 
     if [ -f "$SERVICE_REQUIREMENTS" ]; then
+        colorized_echo blue "Installing updated packages..."
         "$PYTHON_BIN" -m pip install -r "$SERVICE_REQUIREMENTS" --force-reinstall --no-cache-dir || true
     fi
+
+    # Clean pip cache again after installation to free up disk space
+    colorized_echo blue "Cleaning pip cache after installation..."
+    "$PYTHON_BIN" -m pip cache purge >/dev/null 2>&1 || true
 
     systemctl daemon-reload
     systemctl restart rebecca-maint.service
@@ -2420,6 +2542,7 @@ print_menu() {
         "backup:Manual backup launch"
         "backup-service:Backup service (Telegram + cron job)"
         "core-update:Update/Change Xray core"
+        "enable-redis:Enable Redis for subscription caching"
         "edit:Edit docker-compose.yml"
         "edit-env:Edit environment file"
         "ssl:Issue or renew SSL certificates"
@@ -2463,10 +2586,11 @@ map_choice_to_command() {
         18) echo "backup" ;;
         19) echo "backup-service" ;;
         20) echo "core-update" ;;
-        21) echo "edit" ;;
-        22) echo "edit-env" ;;
-        23) echo "ssl" ;;
-        24) echo "help" ;;
+        21) echo "enable-redis" ;;
+        22) echo "edit" ;;
+        23) echo "edit-env" ;;
+        24) echo "ssl" ;;
+        25) echo "help" ;;
         *) echo "$1" ;;
     esac
 }
@@ -2501,6 +2625,7 @@ usage() {
     colorized_echo yellow "  backup          $(tput sgr0)- Manual backup launch"
     colorized_echo yellow "  backup-service  $(tput sgr0)- Rebecca Backupservice to backup to TG, and a new job in crontab"
     colorized_echo yellow "  core-update     $(tput sgr0)- Update/Change Xray core"
+    colorized_echo yellow "  enable-redis    $(tput sgr0)- Enable Redis for subscription caching"
     colorized_echo yellow "  edit            $(tput sgr0)- Edit docker-compose.yml (via nano or vi editor)"
     colorized_echo yellow "  edit-env        $(tput sgr0)- Edit environment file (via nano or vi editor)"
     colorized_echo yellow "  ssl             $(tput sgr0)- Issue or renew SSL certificates"
@@ -2542,6 +2667,7 @@ dispatch_command() {
         script-update|update-script) install_rebecca_script "$@" ;;
         script-uninstall|uninstall-script) uninstall_rebecca_script "$@" ;;
         core-update) update_core_command "$@" ;;
+        enable-redis) enable_redis "$@" ;;
         ssl) ssl_command "$@" ;;
         edit) edit_command "$@" ;;
         edit-env) edit_env_command "$@" ;;
