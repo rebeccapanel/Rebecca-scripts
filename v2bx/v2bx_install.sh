@@ -125,26 +125,23 @@ install_V2bX() {
     cd /usr/local/V2bX/
 
     if [ $# == 0 ]; then
-        last_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ -z "$last_version" ]]; then
-            echo -e "${yellow}Could not detect latest release; falling back to ${DEFAULT_V2BX_VERSION}.${plain}"
-            last_version="$DEFAULT_V2BX_VERSION"
-        fi
-        echo -e "Installing V2bX version: ${last_version}"
-        wget --no-check-certificate -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip "https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}Download failed. Ensure GitHub is reachable or pass a version explicitly (e.g. ${DEFAULT_V2BX_VERSION}).${plain}"
-            exit 1
+        last_version="$DEFAULT_V2BX_VERSION"
+        api_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
+        if [[ -n "$api_version" && "$api_version" != "null" ]]; then
+            last_version="$api_version"
+        else
+            echo -e "${yellow}Could not detect latest release; using default ${last_version}.${plain}"
         fi
     else
         last_version=$1
-        url="https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
-        echo -e "Installing V2bX ${last_version}"
-        wget --no-check-certificate -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip "${url}"
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}Download failed; please verify the version exists.${plain}"
-            exit 1
-        fi
+    fi
+
+    echo -e "Installing V2bX version: ${last_version}"
+    url="https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
+    wget --no-check-certificate -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip "${url}"
+    if [[ $? -ne 0 ]]; then
+        echo -e "${red}Download failed from ${url}. Specify a valid version (e.g. ${DEFAULT_V2BX_VERSION}) or check connectivity.${plain}"
+        exit 1
     fi
 
     unzip V2bX-linux.zip
