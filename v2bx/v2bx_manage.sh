@@ -10,6 +10,8 @@ green='\033[0;32m'
 yellow='\033[0;33m'
 plain='\033[0m'
 
+DEFAULT_V2BX_VERSION="v0.4.1"
+
 [[ $EUID -ne 0 ]] && echo -e "${red}Error:${plain} Run as root.\n" && exit 1
 
 # Detect OS
@@ -80,7 +82,7 @@ before_show_menu() {
 }
 
 install() {
-    bash <(curl -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/install.sh)
+    bash <(curl -Ls https://raw.githubusercontent.com/rebeccapanel/Rebecca-scripts/master/v2bx/v2bx_install.sh) "$1"
     if [[ $? == 0 ]]; then
         if [[ $# == 0 ]]; then
             start
@@ -96,7 +98,11 @@ update() {
     else
         version=$2
     fi
-    bash <(curl -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/install.sh) $version
+    if [[ -z "$version" ]]; then
+        version="$DEFAULT_V2BX_VERSION"
+        echo -e "${yellow}No version provided; using default ${version}.${plain}"
+    fi
+    bash <(curl -Ls https://raw.githubusercontent.com/rebeccapanel/Rebecca-scripts/master/v2bx/v2bx_install.sh) "$version"
     if [[ $? == 0 ]]; then
         echo -e "${green}Update complete. V2bX restarted; check logs with 'V2bX log'.${plain}"
         exit

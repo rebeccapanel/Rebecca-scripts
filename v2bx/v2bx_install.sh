@@ -11,6 +11,7 @@ yellow='\033[0;33m'
 plain='\033[0m'
 
 cur_dir=$(pwd)
+DEFAULT_V2BX_VERSION="v0.4.1"
 
 [[ $EUID -ne 0 ]] && echo -e "${red}Error:${plain} You must run this script as root.\n" && exit 1
 
@@ -126,13 +127,13 @@ install_V2bX() {
     if [ $# == 0 ]; then
         last_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ -z "$last_version" ]]; then
-            echo -e "${red}Failed to detect latest V2bX version. Try again or specify a version.${plain}"
-            exit 1
+            echo -e "${yellow}Could not detect latest release; falling back to ${DEFAULT_V2BX_VERSION}.${plain}"
+            last_version="$DEFAULT_V2BX_VERSION"
         fi
-        echo -e "Latest V2bX version detected: ${last_version}, installing..."
+        echo -e "Installing V2bX version: ${last_version}"
         wget --no-check-certificate -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip "https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
         if [[ $? -ne 0 ]]; then
-            echo -e "${red}Download failed. Ensure GitHub is reachable.${plain}"
+            echo -e "${red}Download failed. Ensure GitHub is reachable or pass a version explicitly (e.g. ${DEFAULT_V2BX_VERSION}).${plain}"
             exit 1
         fi
     else
