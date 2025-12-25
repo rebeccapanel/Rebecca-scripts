@@ -124,16 +124,22 @@ install_V2bX() {
     mkdir -p /usr/local/V2bX/
     cd /usr/local/V2bX/
 
-    if [ $# == 0 ]; then
-        last_version="$DEFAULT_V2BX_VERSION"
+    last_version="$DEFAULT_V2BX_VERSION"
+    if [ $# -gt 0 ]; then
+        last_version="$1"
+    else
         api_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
         if [[ -n "$api_version" && "$api_version" != "null" ]]; then
             last_version="$api_version"
-        else
-            echo -e "${yellow}Could not detect latest release; using default ${last_version}.${plain}"
         fi
-    else
-        last_version=$1
+    fi
+
+    if [[ -z "$last_version" ]]; then
+        last_version="$DEFAULT_V2BX_VERSION"
+    fi
+
+    if [[ "$last_version" == "$DEFAULT_V2BX_VERSION" ]]; then
+        echo -e "${yellow}Using default version ${last_version}.${plain}"
     fi
 
     echo -e "Installing V2bX version: ${last_version}"
@@ -221,7 +227,7 @@ EOF
         fi
     done
 
-    curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/V2bX.sh
+    curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/rebeccapanel/Rebecca-scripts/master/v2bx/v2bx_manage.sh
     chmod +x /usr/bin/V2bX
     if [ ! -L /usr/bin/v2bx ]; then
         ln -s /usr/bin/V2bX /usr/bin/v2bx
@@ -250,13 +256,10 @@ EOF
     echo "------------------------------------------"
 
     if [[ $first_install == true ]]; then
-        read -rp "First install detected. Generate config file now? (y/n): " if_generate
-        if [[ $if_generate == [Yy] ]]; then
-            curl -o ./initconfig.sh -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/initconfig.sh
-            source initconfig.sh
-            rm -f initconfig.sh
-            generate_config_file
-        fi
+        echo ""
+        echo "First install detected."
+        echo "Please edit /etc/V2bX/config.json to point to your Rebecca panel (API host/key/node config)."
+        echo "Default files were placed in /etc/V2bX/. No external config generator was run."
     fi
 }
 

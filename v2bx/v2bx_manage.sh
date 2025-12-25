@@ -11,6 +11,7 @@ yellow='\033[0;33m'
 plain='\033[0m'
 
 DEFAULT_V2BX_VERSION="v0.4.1"
+HELPER_URL="https://raw.githubusercontent.com/rebeccapanel/Rebecca-scripts/master/v2bx/v2bx_manage.sh"
 
 [[ $EUID -ne 0 ]] && echo -e "${red}Error:${plain} Run as root.\n" && exit 1
 
@@ -245,7 +246,7 @@ install_bbr() {
 }
 
 update_shell() {
-    wget -O /usr/bin/V2bX -N --no-check-certificate https://raw.githubusercontent.com/wyx2685/V2bX-script/master/V2bX.sh
+    wget -O /usr/bin/V2bX -N --no-check-certificate "${HELPER_URL}"
     if [[ $? != 0 ]]; then
         echo ""
         echo -e "${red}Failed to download script; check GitHub connectivity.${plain}"
@@ -788,7 +789,7 @@ show_usage() {
 show_menu() {
     echo -e "
   ${green}V2bX backend manager (not for Docker)${plain}
---- https://github.com/wyx2685/V2bX ---
+-- https://github.com/rebeccapanel/Rebecca-scripts --
   ${green}0.${plain} Edit config
 ----------------------------------------
   ${green}1.${plain} Install V2bX
