@@ -70,6 +70,24 @@ rebecca-node help
 sudo rebecca-node core-update
 ```
 
+## V2bX helper scripts
+
+Quick install and management scripts for a standalone V2bX node (upstream sources for now; update URLs later when we host our fork).
+
+* Install V2bX:
+
+```bash
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca-scripts/master/v2bx/v2bx_install.sh)"
+```
+
+* Menu / management helper (start/stop/restart/update/config generator/logs):
+
+```bash
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca-scripts/master/v2bx/v2bx_manage.sh)"
+```
+
+The systemd unit file used by the installer is in `v2bx/v2bx.service`.
+
 ## Maintenance service only
 
 Need only the maintenance API (systemd unit that exposes update/backup endpoints) without reinstalling the full stack? Run:
