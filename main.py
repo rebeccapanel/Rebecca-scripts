@@ -504,6 +504,7 @@ async def restart_panel():
 @app.post("/ssl/issue")
 async def ssl_issue(request: SSLRequest):
     domains_arg = ",".join(request.domains)
+    cert_path = settings.data_dir / "certs" / request.domains[0]
     result = await trigger_rebecca_command(
         "ssl",
         "issue",
@@ -511,7 +512,7 @@ async def ssl_issue(request: SSLRequest):
         f"--domains={domains_arg}",
         "--non-interactive",
     )
-    return {"status": "ok", "stdout": result["stdout"].strip()}
+    return {"status": "ok", "stdout": result["stdout"].strip(), "certificate_path": str(cert_path)}
 
 
 @app.post("/ssl/renew")
@@ -520,7 +521,10 @@ async def ssl_renew(request: Optional[SSLRenewRequest] = None):
     if request and request.domain:
         cmd.append(f"--domain={request.domain}")
     result = await trigger_rebecca_command(*cmd)
-    return {"status": "ok", "stdout": result["stdout"].strip()}
+    payload = {"status": "ok", "stdout": result["stdout"].strip()}
+    if request and request.domain:
+        payload["certificate_path"] = str(settings.data_dir / "certs" / request.domain)
+    return payload
 
 
 @app.get("/version/panel")
