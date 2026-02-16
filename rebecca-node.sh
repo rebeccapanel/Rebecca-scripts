@@ -4,6 +4,7 @@ set -e
 APP_NAME_FROM_ARG=0
 INSTALL_DIR="/opt"
 NODE_DISCOVERY_BASE="/opt"
+SKIP_SERVICE_UPDATE=0
 
 SCRIPT_NAME=$(basename "$0")
 SCRIPT_BASENAME="${SCRIPT_NAME%.*}"
@@ -59,6 +60,10 @@ while [[ $# -gt 0 ]]; do
         install|update|uninstall|up|down|restart|status|logs|core-update|install-script|update-script|uninstall-script|install-service|uninstall-service|service-status|service-logs|edit|service-install|service-update|service-uninstall|script-install|script-update|script-uninstall|help)
             COMMAND="$1"
             shift # past argument
+        ;;
+        --skip-service-update)
+            SKIP_SERVICE_UPDATE=1
+            shift
         ;;
         --name)
             if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" || "$COMMAND" == "install-service" || "$COMMAND" == "service-install" || "$COMMAND" == "script-install" ]]; then
@@ -1196,9 +1201,16 @@ update_command() {
 
     update_rebecca_node_script
 
+    local skip_service_update="$SKIP_SERVICE_UPDATE"
+    if [ "${REBECCA_NODE_SKIP_SERVICE_UPDATE:-0}" = "1" ]; then
+        skip_service_update=1
+    fi
+
     local unit
     unit=$(resolve_node_service_unit_name)
-    if [ -n "$unit" ]; then
+    if [ "$skip_service_update" -eq 1 ]; then
+        colorized_echo yellow "Skipping maintenance service self-update for this run"
+    elif [ -n "$unit" ]; then
         update_rebecca_node_service
     fi
 
