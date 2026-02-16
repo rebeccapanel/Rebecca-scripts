@@ -31,6 +31,18 @@ if [ -z "$REBECCA_SCRIPT_PORT" ]; then
     REBECCA_SCRIPT_PORT="3000"
 fi
 PARSED_DOMAINS=()
+MAINT_FALLBACK_PACKAGES=(
+    "typing-extensions==4.12.2"
+    "pydantic-core==2.27.2"
+    "pydantic==2.10.5"
+    "fastapi==0.115.2"
+    "uvicorn[standard]==0.27.0.post1"
+    "PyYAML==6.0.2"
+    "python-multipart==0.0.9"
+    "email-validator==2.2.0"
+    "pymysql>=1.0.0"
+)
+PIP_NO_RECORD_REGEX="uninstall-no-record-file|no RECORD file was found"
 
 colorized_echo() {
     local color=$1
@@ -53,6 +65,39 @@ colorized_echo() {
             echo "${text}"
         ;;
     esac
+}
+
+pip_install_with_recovery() {
+    local python_bin="$1"
+    shift
+    local pip_args=("$@")
+    local log_file
+    log_file=$(mktemp)
+
+    if "$python_bin" -m pip "${pip_args[@]}" >"$log_file" 2>&1; then
+        cat "$log_file"
+        rm -f "$log_file"
+        return 0
+    fi
+
+    cat "$log_file"
+    if grep -Eqi "$PIP_NO_RECORD_REGEX" "$log_file"; then
+        colorized_echo yellow "Detected pip metadata issue (missing RECORD). Retrying with --ignore-installed..."
+        if "$python_bin" -m pip "${pip_args[@]}" --ignore-installed >"$log_file" 2>&1; then
+            cat "$log_file"
+            rm -f "$log_file"
+            return 0
+        fi
+        cat "$log_file"
+    fi
+
+    rm -f "$log_file"
+    return 1
+}
+
+install_maintenance_fallback_packages() {
+    local python_bin="$1"
+    pip_install_with_recovery "$python_bin" install --upgrade --no-cache-dir "${MAINT_FALLBACK_PACKAGES[@]}"
 }
 
 check_running_as_root() {
@@ -226,38 +271,17 @@ install_rebecca_service() {
     colorized_echo blue "Installing Python dependencies inside maintenance virtualenv..."
     "$PYTHON_BIN" -m pip install --upgrade pip >/dev/null 2>&1 || true
 
-    install_fallback_packages() {
-        "$PYTHON_BIN" -m pip install --force-reinstall --no-cache-dir \
-            'typing-extensions==4.12.2' \
-            'pydantic-core==2.27.2' \
-            'pydantic==2.10.5' \
-            'fastapi==0.115.2' \
-            'uvicorn[standard]==0.27.0.post1' \
-            'PyYAML==6.0.2' \
-            'python-multipart==0.0.9' \
-            'email-validator==2.2.0' || \
-        "$PYTHON_BIN" -m pip install --force-reinstall --no-cache-dir \
-            'typing-extensions==4.12.2' \
-            'pydantic-core==2.27.2' \
-            'pydantic==2.10.5' \
-            'fastapi==0.115.2' \
-            'uvicorn[standard]==0.27.0.post1' \
-            'PyYAML==6.0.2' \
-            'python-multipart==0.0.9' \
-            'email-validator==2.2.0'
-    }
-
     if [ -f "$SERVICE_REQUIREMENTS" ]; then
-        if ! $PYTHON_BIN -m pip install -r "$SERVICE_REQUIREMENTS" --break-system-packages --force-reinstall --no-cache-dir; then
+        if ! pip_install_with_recovery "$PYTHON_BIN" install -r "$SERVICE_REQUIREMENTS" --break-system-packages --upgrade --no-cache-dir; then
             colorized_echo yellow "Failed to install using downloaded requirements. Falling back to pinned packages."
-            install_fallback_packages || {
+            install_maintenance_fallback_packages "$PYTHON_BIN" || {
                 colorized_echo red "Failed to install maintenance service dependencies."
                 cleanup_on_failure
                 return 1
             }
         fi
     else
-        install_fallback_packages || {
+        install_maintenance_fallback_packages "$PYTHON_BIN" || {
             colorized_echo red "Failed to install maintenance service dependencies."
             cleanup_on_failure
             return 1
@@ -564,6 +588,46 @@ EOF
     fi
 }
 
+add_phpmyadmin_to_compose() {
+    local compose_file="$1"
+
+    # Check if phpMyAdmin service already exists
+    if grep -q "^\s*phpmyadmin:" "$compose_file" 2>/dev/null; then
+        return 0
+    fi
+
+    # Add phpMyAdmin service to docker-compose.yml
+    if command -v yq >/dev/null 2>&1; then
+        yq eval '.services.phpmyadmin = {
+            "image": "phpmyadmin/phpmyadmin:latest",
+            "restart": "always",
+            "env_file": ".env",
+            "network_mode": "host",
+            "environment": {
+                "PMA_HOST": "127.0.0.1",
+                "APACHE_PORT": 8010,
+                "UPLOAD_LIMIT": "1024M"
+            },
+            "depends_on": ["mysql"]
+        }' -i "$compose_file"
+    else
+        cat >> "$compose_file" <<EOF
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    restart: always
+    env_file: .env
+    network_mode: host
+    environment:
+      PMA_HOST: 127.0.0.1
+      APACHE_PORT: 8010
+      UPLOAD_LIMIT: 1024M
+    depends_on:
+      - mysql
+EOF
+    fi
+}
+
 configure_redis_env() {
     # Ensure Redis configuration section exists in .env
     if ! grep -q "# Redis configuration" "$ENV_FILE" 2>/dev/null; then
@@ -615,6 +679,26 @@ enable_redis() {
     else
         colorized_echo green "Redis enabled. Start services with: rebecca up"
     fi
+}
+
+enable_phpmyadmin() {
+    check_running_as_root
+
+    if ! is_rebecca_installed; then
+        colorized_echo red "Rebecca is not installed. Please install Rebecca first."
+        exit 1
+    fi
+
+    detect_compose
+
+    colorized_echo blue "Adding phpMyAdmin to docker-compose.yml..."
+    add_phpmyadmin_to_compose "$COMPOSE_FILE"
+    colorized_echo green "phpMyAdmin service added to docker-compose.yml"
+
+    colorized_echo blue "Restarting Rebecca services..."
+    down_rebecca
+    up_rebecca
+    colorized_echo green "Rebecca restarted successfully."
 }
 
 persist_rebecca_service_env() {
@@ -1791,18 +1875,10 @@ EOF
     curl -sL "$FILES_URL_PREFIX/xray_config.json" -o "$DATA_DIR/xray_config.json"
     colorized_echo green "File saved in $DATA_DIR/xray_config.json"
     
-    # Ask about Redis installation
-    echo ""
-    read -p "Do you want to install Redis for subscription caching? (y/N): " install_redis_answer
-    if [[ "$install_redis_answer" =~ ^[Yy]$ ]]; then
-        colorized_echo blue "Adding Redis to docker-compose.yml..."
-        add_redis_to_compose "$docker_file_path"
-        colorized_echo green "Redis service added to docker-compose.yml"
-        
-        colorized_echo blue "Configuring Redis in .env file..."
-        configure_redis_env
-        colorized_echo green "Redis configuration added to .env file"
-    fi
+    # Keep Redis disabled in the installation flow.
+    set_env_value "REDIS_ENABLED" "false"
+    set_env_value "REDIS_AUTO_START" "false"
+    colorized_echo blue "Redis is disabled by default in installer flow."
     
     colorized_echo green "Rebecca's files downloaded successfully"
 }
@@ -2440,7 +2516,19 @@ update_rebecca_service() {
 
     if [ -f "$SERVICE_REQUIREMENTS" ]; then
         colorized_echo blue "Installing updated packages..."
-        "$PYTHON_BIN" -m pip install -r "$SERVICE_REQUIREMENTS" --force-reinstall --no-cache-dir || true
+        if ! pip_install_with_recovery "$PYTHON_BIN" install -r "$SERVICE_REQUIREMENTS" --upgrade --no-cache-dir; then
+            colorized_echo yellow "Failed to install using downloaded requirements. Falling back to pinned packages."
+            if ! install_maintenance_fallback_packages "$PYTHON_BIN"; then
+                colorized_echo red "Failed to install maintenance service dependencies."
+                exit 1
+            fi
+        fi
+    else
+        colorized_echo yellow "requirements.txt not available; using pinned fallback packages."
+        if ! install_maintenance_fallback_packages "$PYTHON_BIN"; then
+            colorized_echo red "Failed to install maintenance service dependencies."
+            exit 1
+        fi
     fi
 
     # Clean pip cache again after installation to free up disk space
@@ -2543,6 +2631,7 @@ print_menu() {
         "backup-service:Backup service (Telegram + cron job)"
         "core-update:Update/Change Xray core"
         "enable-redis:Enable Redis for subscription caching"
+        "enable-phpmyadmin:Add phpMyAdmin to docker-compose and restart services"
         "edit:Edit docker-compose.yml"
         "edit-env:Edit environment file"
         "ssl:Issue or renew SSL certificates"
@@ -2587,10 +2676,11 @@ map_choice_to_command() {
         19) echo "backup-service" ;;
         20) echo "core-update" ;;
         21) echo "enable-redis" ;;
-        22) echo "edit" ;;
-        23) echo "edit-env" ;;
-        24) echo "ssl" ;;
-        25) echo "help" ;;
+        22) echo "enable-phpmyadmin" ;;
+        23) echo "edit" ;;
+        24) echo "edit-env" ;;
+        25) echo "ssl" ;;
+        26) echo "help" ;;
         *) echo "$1" ;;
     esac
 }
@@ -2626,6 +2716,7 @@ usage() {
     colorized_echo yellow "  backup-service  $(tput sgr0)- Rebecca Backupservice to backup to TG, and a new job in crontab"
     colorized_echo yellow "  core-update     $(tput sgr0)- Update/Change Xray core"
     colorized_echo yellow "  enable-redis    $(tput sgr0)- Enable Redis for subscription caching"
+    colorized_echo yellow "  enable-phpmyadmin $(tput sgr0)- Add phpMyAdmin to docker-compose.yml and restart services"
     colorized_echo yellow "  edit            $(tput sgr0)- Edit docker-compose.yml (via nano or vi editor)"
     colorized_echo yellow "  edit-env        $(tput sgr0)- Edit environment file (via nano or vi editor)"
     colorized_echo yellow "  ssl             $(tput sgr0)- Issue or renew SSL certificates"
@@ -2668,6 +2759,7 @@ dispatch_command() {
         script-uninstall|uninstall-script) uninstall_rebecca_script "$@" ;;
         core-update) update_core_command "$@" ;;
         enable-redis) enable_redis "$@" ;;
+        enable-phpmyadmin) enable_phpmyadmin "$@" ;;
         ssl) ssl_command "$@" ;;
         edit) edit_command "$@" ;;
         edit-env) edit_env_command "$@" ;;
