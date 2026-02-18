@@ -1757,20 +1757,21 @@ EOF
 
         prompt_for_rebecca_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+        MYSQL_PASSWORD_URL_ENCODED=$(urlencode_value "$MYSQL_PASSWORD")
         
         echo "" >> "$ENV_FILE"
         echo "" >> "$ENV_FILE"
         echo "# Database configuration" >> "$ENV_FILE"
-        echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$ENV_FILE"
-        echo "MYSQL_DATABASE=rebecca" >> "$ENV_FILE"
-        echo "MYSQL_USER=rebecca" >> "$ENV_FILE"
-        echo "MYSQL_PASSWORD=$MYSQL_PASSWORD" >> "$ENV_FILE"
+        upsert_env_assignment "MYSQL_ROOT_PASSWORD" "$MYSQL_ROOT_PASSWORD"
+        upsert_env_assignment "MYSQL_DATABASE" "rebecca"
+        upsert_env_assignment "MYSQL_USER" "rebecca"
+        upsert_env_assignment "MYSQL_PASSWORD" "$MYSQL_PASSWORD"
         
-        SQLALCHEMY_DATABASE_URL="mysql+pymysql://rebecca:${MYSQL_PASSWORD}@127.0.0.1:3306/rebecca"
+        SQLALCHEMY_DATABASE_URL="mysql+pymysql://rebecca:${MYSQL_PASSWORD_URL_ENCODED}@127.0.0.1:3306/rebecca"
         
         echo "" >> "$ENV_FILE"
         echo "# SQLAlchemy Database URL" >> "$ENV_FILE"
-        echo "SQLALCHEMY_DATABASE_URL=\"$SQLALCHEMY_DATABASE_URL\"" >> "$ENV_FILE"
+        upsert_env_assignment "SQLALCHEMY_DATABASE_URL" "$SQLALCHEMY_DATABASE_URL"
         
         colorized_echo green "File saved in $APP_DIR/.env"
 
@@ -1858,20 +1859,21 @@ EOF
 
         prompt_for_rebecca_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+        MYSQL_PASSWORD_URL_ENCODED=$(urlencode_value "$MYSQL_PASSWORD")
         
         echo "" >> "$ENV_FILE"
         echo "" >> "$ENV_FILE"
         echo "# Database configuration" >> "$ENV_FILE"
-        echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$ENV_FILE"
-        echo "MYSQL_DATABASE=rebecca" >> "$ENV_FILE"
-        echo "MYSQL_USER=rebecca" >> "$ENV_FILE"
-        echo "MYSQL_PASSWORD=$MYSQL_PASSWORD" >> "$ENV_FILE"
+        upsert_env_assignment "MYSQL_ROOT_PASSWORD" "$MYSQL_ROOT_PASSWORD"
+        upsert_env_assignment "MYSQL_DATABASE" "rebecca"
+        upsert_env_assignment "MYSQL_USER" "rebecca"
+        upsert_env_assignment "MYSQL_PASSWORD" "$MYSQL_PASSWORD"
         
-        SQLALCHEMY_DATABASE_URL="mysql+pymysql://rebecca:${MYSQL_PASSWORD}@127.0.0.1:3306/rebecca"
+        SQLALCHEMY_DATABASE_URL="mysql+pymysql://rebecca:${MYSQL_PASSWORD_URL_ENCODED}@127.0.0.1:3306/rebecca"
         
         echo "" >> "$ENV_FILE"
         echo "# SQLAlchemy Database URL" >> "$ENV_FILE"
-        echo "SQLALCHEMY_DATABASE_URL=\"$SQLALCHEMY_DATABASE_URL\"" >> "$ENV_FILE"
+        upsert_env_assignment "SQLALCHEMY_DATABASE_URL" "$SQLALCHEMY_DATABASE_URL"
         
         colorized_echo green "File saved in $APP_DIR/.env"
 
