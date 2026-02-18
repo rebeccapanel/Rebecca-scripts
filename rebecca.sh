@@ -553,6 +553,52 @@ set_env_value() {
     fi
 }
 
+escape_dotenv_double_quoted() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//\$/\\\$}"
+    printf '%s' "$value"
+}
+
+upsert_env_assignment() {
+    local key="$1"
+    local value="$2"
+    local escaped_value
+    local tmp_env
+
+    escaped_value=$(escape_dotenv_double_quoted "$value")
+    mkdir -p "$(dirname "$ENV_FILE")"
+    touch "$ENV_FILE"
+
+    tmp_env=$(mktemp)
+    grep -vE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE" > "$tmp_env" || true
+    mv "$tmp_env" "$ENV_FILE"
+
+    echo "${key}=\"${escaped_value}\"" >> "$ENV_FILE"
+}
+
+urlencode_value() {
+    local value="$1"
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$value"
+        return
+    fi
+
+    if command -v python >/dev/null 2>&1; then
+        python -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$value"
+        return
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s' "$value" | jq -sRr @uri
+        return
+    fi
+
+    printf '%s' "$value"
+}
+
 add_redis_to_compose() {
     local compose_file="$1"
     
@@ -1933,7 +1979,7 @@ prompt_for_rebecca_password() {
     colorized_echo cyan "If you do not enter a custom password, a secure 20-character password will be generated automatically."
 
     # Запрашиваем ввод пароля
-    read -p "Enter the password for the rebecca user (or press Enter to generate a secure default password): " MYSQL_PASSWORD
+    IFS= read -r -p "Enter the password for the rebecca user (or press Enter to generate a secure default password): " MYSQL_PASSWORD
 
     # Генерация 20-значного пароля, если пользователь оставил поле пустым
     if [ -z "$MYSQL_PASSWORD" ]; then
@@ -2439,6 +2485,7 @@ update_command() {
     
     colorized_echo blue "Restarting Rebecca's services"
     down_rebecca
+    prune_unused_docker_images
     up_rebecca
     
     colorized_echo blue "Rebecca updated successfully"
@@ -2542,6 +2589,15 @@ update_rebecca_service() {
 
 update_rebecca() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" pull
+}
+
+prune_unused_docker_images() {
+    colorized_echo blue "Removing old and unused Docker images"
+    if docker image prune -a -f >/dev/null 2>&1; then
+        colorized_echo green "Unused Docker images removed successfully"
+    else
+        colorized_echo yellow "Unable to prune Docker images; continuing update"
+    fi
 }
 
 check_editor() {
