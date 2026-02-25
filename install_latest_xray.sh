@@ -3,6 +3,9 @@
 # Download Xray latest
 
 RELEASE_TAG="latest"
+DATA_DIR="${REBECCA_DATA_DIR:-/var/lib/rebecca}"
+INSTALL_DIR="${XRAY_INSTALL_DIR:-$DATA_DIR/xray-core}"
+ASSETS_DIR="${XRAY_ASSETS_DIR:-$INSTALL_DIR}"
 
 if [[ "$1" ]]; then
     RELEASE_TAG="$1"
@@ -100,10 +103,17 @@ extract_xray() {
 }
 
 place_xray() {
-    install -m 755 "${TMP_DIRECTORY}/xray" "/usr/local/bin/xray"
-    install -d "/usr/local/share/xray/"
-    install -m 644 "${TMP_DIRECTORY}/geoip.dat" "/usr/local/share/xray/geoip.dat"
-    install -m 644 "${TMP_DIRECTORY}/geosite.dat" "/usr/local/share/xray/geosite.dat"
+    install -d "$INSTALL_DIR"
+    install -d "$ASSETS_DIR"
+    install -m 755 "${TMP_DIRECTORY}/xray" "${INSTALL_DIR}/xray"
+    install -m 644 "${TMP_DIRECTORY}/geoip.dat" "${ASSETS_DIR}/geoip.dat"
+    install -m 644 "${TMP_DIRECTORY}/geosite.dat" "${ASSETS_DIR}/geosite.dat"
+
+    # Backward-compatible links for tools that still look under /usr/local.
+    install -d "/usr/local/bin" "/usr/local/share"
+    ln -sf "${INSTALL_DIR}/xray" "/usr/local/bin/xray" || true
+    ln -sfn "${ASSETS_DIR}" "/usr/local/share/xray" || true
+
     echo "Xray files installed"
 }
 
