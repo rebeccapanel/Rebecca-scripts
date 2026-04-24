@@ -54,7 +54,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 MAINT_SOURCE_URL = os.getenv(
     "REBECCA_MAINT_SOURCE_URL",
-    "https://github.com/rebeccapanel/Rebecca/raw/master/Rebecca-scripts/main.py",
+    "https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/main.py",
 )
 MAINT_UNIT_NAME = os.getenv("REBECCA_MAINT_UNIT", "rebecca-maint.service")
 
